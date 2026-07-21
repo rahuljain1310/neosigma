@@ -1,8 +1,11 @@
+import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth import DEFAULT_USER_PASSWORD, hash_password
+from app.config import get_settings
 from app.db import get_session
 from app.main import app
 from app.models.base import Base
@@ -257,3 +260,105 @@ async def test_cancel_job_marks_it_terminal_and_processor_does_not_revive_it(tes
     detail = await client.get(f"/jobs/{job_id}", headers=headers)
     assert detail.json()["status"] == "cancelled"
     assert detail.json()["iterations"] == []
+
+
+@pytest.mark.asyncio
+async def test_access_token_embeds_admin_flag(test_env):
+    client, _, org_name, email = test_env
+    login = await client.post(
+        "/auth/login",
+        json={"org_name": org_name, "email": email, "password": DEFAULT_USER_PASSWORD},
+    )
+    assert login.status_code == 200
+    payload = jwt.decode(
+        login.json()["access_token"],
+        get_settings().jwt_secret,
+        algorithms=["HS256"],
+    )
+    assert payload["role"] == "admin"
+    assert payload["is_admin"] is True
+    assert payload["org_id"]
+    assert payload["sub"]
+
+
+@pytest.mark.asyncio
+async def test_member_sees_own_jobs_admin_sees_all(test_env):
+    client, factory, org_name, admin_email = test_env
+
+    async with factory() as session:
+        org = (await session.execute(select(Organization).where(Organization.name == org_name))).scalar_one()
+        member = User(
+            org_id=org.id,
+            email="member@example.com",
+            name="member",
+            role=Role.MEMBER,
+            password_hash=hash_password(DEFAULT_USER_PASSWORD),
+        )
+        other = User(
+            org_id=org.id,
+            email="other@example.com",
+            name="other",
+            role=Role.MEMBER,
+            password_hash=hash_password(DEFAULT_USER_PASSWORD),
+        )
+        session.add_all([member, other])
+        await session.commit()
+
+    admin_headers = await _auth_headers(client, org_name, admin_email)
+    member_headers = await _auth_headers(client, org_name, "member@example.com")
+    other_headers = await _auth_headers(client, org_name, "other@example.com")
+
+    member_job = await client.post(
+        "/jobs",
+        json={"task_ids": ["regex-log"], "max_iterations": 1, "patience": 1, "executor": "simulated"},
+        headers=member_headers,
+    )
+    assert member_job.status_code == 202
+    member_job_id = member_job.json()["id"]
+
+    other_job = await client.post(
+        "/jobs",
+        json={"task_ids": ["regex-log"], "max_iterations": 1, "patience": 1, "executor": "simulated"},
+        headers=other_headers,
+    )
+    assert other_job.status_code == 202
+    other_job_id = other_job.json()["id"]
+
+    # Member lists only own jobs.
+    member_list = await client.get("/jobs", headers=member_headers)
+    assert member_list.status_code == 200
+    member_ids = {j["id"] for j in member_list.json()}
+    assert member_job_id in member_ids
+    assert other_job_id not in member_ids
+
+    # Member cannot read another member's job.
+    denied = await client.get(f"/jobs/{other_job_id}", headers=member_headers)
+    assert denied.status_code == 403
+
+    # Admin lists and reads all org jobs.
+    admin_list = await client.get("/jobs", headers=admin_headers)
+    assert admin_list.status_code == 200
+    admin_ids = {j["id"] for j in admin_list.json()}
+    assert member_job_id in admin_ids
+    assert other_job_id in admin_ids
+
+    admin_get = await client.get(f"/jobs/{other_job_id}", headers=admin_headers)
+    assert admin_get.status_code == 200
+
+    # Cross-org access is forbidden (403).
+    other_org = await client.post("/orgs", json={"name": "other-org-rbac"})
+    assert other_org.status_code == 201
+    other_org_id = other_org.json()["id"]
+    bootstrap = await client.post(
+        f"/orgs/{other_org_id}/users",
+        json={
+            "email": "owner@other.example.com",
+            "password": DEFAULT_USER_PASSWORD,
+            "name": "owner",
+            "role": "member",
+        },
+    )
+    assert bootstrap.status_code == 201
+    foreign_headers = await _auth_headers(client, "other-org-rbac", "owner@other.example.com")
+    cross = await client.get(f"/jobs/{member_job_id}", headers=foreign_headers)
+    assert cross.status_code == 403

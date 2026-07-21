@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user_optional, hash_password
+from app.authz import AuthzDenied, admin, assert_can_manage_org
 from app.db import get_session
 from app.models.organization import Organization
 from app.models.user import Role, User
@@ -52,17 +53,33 @@ async def create_user(
     user_count = int(count_result.scalar_one())
 
     if user_count == 0:
-        role = Role.ADMIN
-    else:
-        if actor is None:
-            raise HTTPException(
-                status_code=401,
-                detail="Missing or invalid Authorization header. Use: Bearer <access_token>",
-            )
-        if actor.org_id != org_id or actor.role != Role.ADMIN:
-            raise HTTPException(status_code=403, detail="Admin role required for this organization")
-        role = body.role
+        # First user bootstraps as org admin (open; no JWT required).
+        return await _persist_user(session, org_id, body, role=Role.ADMIN)
 
+    # Subsequent users: admin-only for this organization.
+    if actor is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header. Use: Bearer <access_token>",
+        )
+    return await _create_user_as_admin(org_id, body, session, user=actor)
+
+
+@admin
+async def _create_user_as_admin(
+    org_id: str,
+    body: UserCreate,
+    session: AsyncSession,
+    user: User,
+) -> User:
+    try:
+        assert_can_manage_org(user, org_id)
+    except AuthzDenied as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail) from exc
+    return await _persist_user(session, org_id, body, role=body.role)
+
+
+async def _persist_user(session: AsyncSession, org_id: str, body: UserCreate, *, role: Role) -> User:
     existing = await session.execute(select(User).where(User.org_id == org_id, User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="User already exists in this organization")

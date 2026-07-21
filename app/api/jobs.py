@@ -5,10 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
+from app.authz import AuthzDenied, assert_can_view_job, scope_jobs_for_user
 from app.db import get_session
 from app.harness.template import DEFAULT_TASK_IDS
 from app.models.job import Job, JobStatus, StopReason
-from app.models.user import Role, User
+from app.models.user import User
 from app.schemas.agent_version import AgentVersionDetail
 from app.schemas.iteration import IterationDetail, IterationSummary
 from app.schemas.job import JobCreate, JobResponse, JobSummary
@@ -62,9 +63,7 @@ async def list_jobs(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> list[JobSummary]:
-    stmt = select(Job).where(Job.org_id == user.org_id)
-    if user.role != Role.ADMIN:
-        stmt = stmt.where(Job.created_by == user.id)
+    stmt = scope_jobs_for_user(select(Job), user)
     if status_filter is not None:
         stmt = stmt.where(Job.status == status_filter)
     stmt = stmt.order_by(Job.created_at.desc())
@@ -187,8 +186,8 @@ async def _get_visible_job(session: AsyncSession, job_id: str, user: User) -> Jo
     job = result.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.org_id != user.org_id:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if user.role != Role.ADMIN and job.created_by != user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this job")
+    try:
+        assert_can_view_job(user, job)
+    except AuthzDenied as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail) from exc
     return job
