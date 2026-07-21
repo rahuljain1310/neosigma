@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import re
 from dataclasses import dataclass
 
@@ -9,6 +10,8 @@ import litellm
 
 from app.config import get_settings
 from app.executor.base import TaskExecution
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +24,13 @@ class OptimizationProposal:
 
 
 class Optimizer:
+    def effective_mode(self) -> str:
+        settings = get_settings()
+        mode = settings.optimizer_mode
+        if mode == "auto":
+            return "llm" if settings.openai_api_key else "heuristic"
+        return mode
+
     async def propose(
         self,
         *,
@@ -31,9 +41,14 @@ class Optimizer:
         val_score: float,
     ) -> OptimizationProposal:
         settings = get_settings()
-        mode = settings.optimizer_mode
-        if mode == "auto":
-            mode = "llm" if settings.openai_api_key else "heuristic"
+        mode = self.effective_mode()
+        logger.info(
+            "[optimizer] iteration %s: mode=%s (configured=%s, openai_key=%s)",
+            iteration_no,
+            mode,
+            settings.optimizer_mode,
+            "set" if settings.openai_api_key else "missing",
+        )
 
         if mode == "llm":
             try:
@@ -46,8 +61,11 @@ class Optimizer:
                     model=settings.optimizer_model,
                 )
             except Exception:
-                # Fall back to the deterministic heuristic when the LLM is unavailable.
-                pass
+                logger.warning(
+                    "[optimizer] iteration %s: LLM proposal failed, falling back to heuristic",
+                    iteration_no,
+                    exc_info=True,
+                )
         return self._propose_heuristic(
             current_agent=current_agent,
             failing_tasks=failing_tasks,

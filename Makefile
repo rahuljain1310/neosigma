@@ -38,7 +38,7 @@ openapi: install ## Export OpenAPI spec to openapi.json
 	$(UV) run python scripts/export_openapi.py
 
 client: ## Run test_client.py (logs in with default assignment credentials)
-	$(UV) run python test_client.py --executor simulated --max-iterations 3 --patience 2
+	$(UV) run python test_client.py --executor simulated --max-iterations 15 --patience 5
 
 clean: down ## Stop containers and remove Python caches
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

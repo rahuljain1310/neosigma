@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import time
 from typing import Any
 
@@ -25,6 +24,70 @@ def login(client: httpx.Client, org_name: str, email: str, password: str) -> str
     resp.raise_for_status()
     data = resp.json()
     return data["access_token"]
+
+
+
+def _benchmark_snapshot(it: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        it.get("val_score"),
+        it.get("tasks_passed"),
+        it.get("tasks_failed"),
+        it.get("tasks_infra_error"),
+        tuple(it.get("failed_task_ids") or []),
+        it.get("accepted"),
+    )
+
+
+def _proposal_snapshot(it: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        it.get("proposed_agent_version_no"),
+        it.get("improvement_rationale"),
+    )
+
+
+def _format_task_counts(it: dict[str, Any]) -> str:
+    passed = it.get("tasks_passed", 0)
+    failed = it.get("tasks_failed", 0)
+    infra = it.get("tasks_infra_error", 0)
+    total = passed + failed + infra
+    return f"{passed}/{total} passed, {failed} failed, {infra} infra_error"
+
+
+def _print_iteration_update(it: dict[str, Any], *, best_val_score: float | None) -> None:
+    iteration_no = it["iteration_no"]
+    phase = it.get("phase")
+    agent_v = it.get("agent_version_no")
+    val_score = it.get("val_score")
+
+    if phase in {"running_benchmark", "pending"}:
+        print(f"  [iter {iteration_no}] running benchmark with agent_v={agent_v} ...")
+        return
+
+    if val_score is not None and phase in {
+        "analyzing",
+        "proposing",
+        "done",
+        "failed",
+    }:
+        counts = _format_task_counts(it)
+        failed_ids = it.get("failed_task_ids") or []
+        failed_note = f" ({', '.join(failed_ids)})" if failed_ids else ""
+        print(
+            f"  [iter {iteration_no}] benchmark done: agent_v={agent_v} "
+            f"val_score={val_score:.3f} | {counts}{failed_note}"
+        )
+
+    if it.get("accepted") is True and iteration_no > 0:
+        print(
+            f"  [iter {iteration_no}] accepted — new best_val_score={best_val_score:.3f} "
+            f"(agent_v={agent_v})"
+        )
+    elif it.get("accepted") is False:
+        best_note = f"{best_val_score:.3f}" if best_val_score is not None else "n/a"
+        print(
+            f"  [iter {iteration_no}] rejected — val_score={val_score:.3f} "
+            f"(best remains {best_note})"
+        )
 
 
 def main() -> int:
@@ -67,13 +130,51 @@ def main() -> int:
         job_id = job["id"]
         print(f"Submitted job {job_id} (status={job['status']})")
 
+        seen_benchmarks: dict[int, tuple[Any, ...]] = {}
+        seen_proposals: dict[int, tuple[Any, ...]] = {}
+        last_status: str | None = None
+
         while True:
             resp = client.get(f"/jobs/{job_id}", headers=headers)
             resp.raise_for_status()
             job = resp.json()
             status = job["status"]
-            score = job.get("best_val_score")
-            print(f"  status={status} best_val_score={score}")
+            best_val_score = job.get("best_val_score")
+
+            if status != last_status:
+                score_note = (
+                    f"best_val_score={best_val_score:.3f}"
+                    if best_val_score is not None
+                    else "best_val_score=None"
+                )
+                print(f"  job status={status} {score_note}")
+                last_status = status
+
+            for it in job.get("iterations", []):
+                iteration_no = it["iteration_no"]
+                bench_key = _benchmark_snapshot(it)
+                if (
+                    it.get("val_score") is not None
+                    and seen_benchmarks.get(iteration_no) != bench_key
+                ):
+                    _print_iteration_update(it, best_val_score=best_val_score)
+                    seen_benchmarks[iteration_no] = bench_key
+
+                proposal_key = _proposal_snapshot(it)
+                if (
+                    it.get("proposed_agent_version_no") is not None
+                    and it.get("improvement_rationale")
+                    and seen_proposals.get(iteration_no) != proposal_key
+                ):
+                    rationale = it["improvement_rationale"].strip()
+                    if len(rationale) > 160:
+                        rationale = rationale[:157] + "..."
+                    print(
+                        f"  [iter {iteration_no}] proposed agent_v="
+                        f"{it['proposed_agent_version_no']} for next run: {rationale}"
+                    )
+                    seen_proposals[iteration_no] = proposal_key
+
             if status in {"completed", "failed", "cancelled"}:
                 break
             time.sleep(args.poll_interval)
@@ -95,20 +196,21 @@ def main() -> int:
         for tr in job.get("latest_task_results", []):
             print(f"  {tr['task_id']}: {tr['status']} reward={tr.get('reward')}")
 
-        iterations_resp = client.get(f"/jobs/{job_id}/iterations", headers=headers)
-        iterations_resp.raise_for_status()
-        iterations = iterations_resp.json()
+        iterations = job.get("iterations", [])
         print(f"\n=== Iteration history ({len(iterations)} iterations) ===")
         for it in iterations:
             accepted = it.get("accepted")
             mark = "✓" if accepted else ("✗" if accepted is False else "-")
+            counts = _format_task_counts(it)
             print(
                 f"  [{mark}] iter={it['iteration_no']} "
                 f"phase={it['phase']} val_score={it.get('val_score')} "
-                f"agent_v={it['agent_version_no']}"
+                f"agent_v={it['agent_version_no']} | {counts}"
             )
+            if it.get("failed_task_ids"):
+                print(f"       failed: {', '.join(it['failed_task_ids'])}")
             if it.get("improvement_rationale"):
-                print(f"       rationale: {it['improvement_rationale'][:120]}")
+                print(f"       changes: {it['improvement_rationale'][:160]}")
 
         if iterations:
             detail = client.get(f"/jobs/{job_id}/iterations/0", headers=headers)

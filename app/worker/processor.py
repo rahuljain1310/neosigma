@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -11,6 +12,8 @@ from app.models.iteration import Iteration, IterationPhase
 from app.models.job import Job, JobStatus, StopReason
 from app.optimizer import Optimizer
 from app.services.agent_versions import create_agent_version, get_agent_version, save_iteration_results
+
+logger = logging.getLogger(__name__)
 
 
 class JobProcessor:
@@ -43,6 +46,17 @@ class JobProcessor:
 
     async def _run_loop(self, job: Job) -> None:
         executor = get_executor(job.id, job.executor, job.config)
+        optimizer_mode = self.optimizer.effective_mode()
+        logger.info(
+            "[job %s] starting optimization loop: executor=%s optimizer_mode=%s "
+            "max_iterations=%s patience=%s tasks=%s",
+            job.id,
+            job.executor,
+            optimizer_mode,
+            job.max_iterations,
+            job.patience,
+            len(job.task_ids),
+        )
 
         v0 = await create_agent_version(
             self.session,
@@ -50,7 +64,7 @@ class JobProcessor:
             version_no=0,
             content=AGENT_TEMPLATE,
             parent_version_no=None,
-            created_by_iteration=0,
+            created_by_iteration=None,
         )
         await self.session.commit()
 
@@ -85,6 +99,22 @@ class JobProcessor:
 
             result = await executor.run_benchmark(job.task_ids, version.content)
             await save_iteration_results(self.session, iteration=iteration, job=job, benchmark_result=result)
+            passed = sum(1 for t in result.task_results if t.status == "passed")
+            failed = sum(1 for t in result.task_results if t.status == "failed")
+            infra = sum(1 for t in result.task_results if t.status == "infra_error")
+            failed_ids = [t.task_id for t in result.task_results if t.status != "passed"]
+            logger.info(
+                "[job %s] iter %s benchmark done: agent_v=%s passed=%s failed=%s "
+                "infra_error=%s val_score=%.3f failed_tasks=%s",
+                job.id,
+                iteration_no,
+                run_version_no,
+                passed,
+                failed,
+                infra,
+                result.val_score,
+                failed_ids or "none",
+            )
             iteration.phase = IterationPhase.DONE
             await self.session.commit()
 
@@ -95,6 +125,11 @@ class JobProcessor:
                 best_failures = [t for t in result.task_results if t.status != "passed"]
                 iteration.accepted = True
                 await self.session.commit()
+                logger.info(
+                    "[job %s] iter 0 baseline set: best_val_score=%.3f agent_v=0",
+                    job.id,
+                    best_score,
+                )
             else:
                 improved = best_score is None or result.val_score > best_score
                 if improved:
@@ -107,9 +142,26 @@ class JobProcessor:
                     iteration.accepted = True
                     no_improve = 0
                     best_failures = [t for t in result.task_results if t.status != "passed"]
+                    logger.info(
+                        "[job %s] iter %s accepted: new best_val_score=%.3f agent_v=%s",
+                        job.id,
+                        iteration_no,
+                        best_score,
+                        best_version_no,
+                    )
                 else:
                     iteration.accepted = False
                     no_improve += 1
+                    logger.info(
+                        "[job %s] iter %s rejected: val_score=%.3f (best=%.3f) "
+                        "no_improve=%s/%s",
+                        job.id,
+                        iteration_no,
+                        result.val_score,
+                        best_score or 0.0,
+                        no_improve,
+                        job.patience,
+                    )
                 await self.session.commit()
 
                 if no_improve >= job.patience:
@@ -160,6 +212,13 @@ class JobProcessor:
             next_version_no += 1
             iteration.phase = IterationPhase.DONE
             await self.session.commit()
+            logger.info(
+                "[job %s] iter %s proposal ready: created agent_v=%s rationale=%s",
+                job.id,
+                iteration_no,
+                candidate_version_no,
+                (proposal.rationale or "")[:200],
+            )
 
         job.stop_reason = StopReason.MAX_ITERATIONS
 

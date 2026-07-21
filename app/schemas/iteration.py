@@ -25,6 +25,14 @@ class IterationSummary(BaseModel):
     phase: IterationPhase
     val_score: float | None
     accepted: bool | None
+    tasks_passed: int = 0
+    tasks_failed: int = 0
+    tasks_infra_error: int = 0
+    failed_task_ids: list[str] = Field(default_factory=list)
+    proposed_agent_version_no: int | None = Field(
+        default=None,
+        description="Agent version created by this iteration's optimizer proposal.",
+    )
     bench_started_at: datetime | None
     bench_finished_at: datetime | None
     llm_started_at: datetime | None

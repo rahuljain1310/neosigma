@@ -12,12 +12,14 @@ from app.schemas.iteration import IterationDetail, IterationSummary
 from app.schemas.job import JobCreate, JobResponse
 from app.services.jobs import (
     best_agent_version_no,
+    build_iteration_summaries,
     get_iteration,
     get_iterations,
     get_latest_task_results,
     get_task_results_for_iteration,
     iteration_to_detail,
     job_to_response,
+    proposed_version_no,
 )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -65,11 +67,12 @@ async def get_job(
 ) -> JobResponse:
     job = await _get_visible_job(session, job_id, user)
     iterations = await get_iterations(session, job_id)
+    iteration_summaries = await build_iteration_summaries(session, job_id, iterations)
     latest_results = await get_latest_task_results(session, job_id)
     version_no = await best_agent_version_no(session, job)
     return job_to_response(
         job,
-        iterations=iterations,
+        iteration_summaries=iteration_summaries,
         latest_task_results=latest_results,
         best_version_no=version_no,
     )
@@ -88,7 +91,7 @@ async def list_iterations(
 ) -> list[IterationSummary]:
     await _get_visible_job(session, job_id, user)
     iterations = await get_iterations(session, job_id)
-    return [IterationSummary.model_validate(i) for i in iterations]
+    return await build_iteration_summaries(session, job_id, iterations)
 
 
 @router.get(
@@ -108,7 +111,10 @@ async def get_iteration_detail(
     if iteration is None:
         raise HTTPException(status_code=404, detail="Iteration not found")
     task_results = await get_task_results_for_iteration(session, iteration.id)
-    return iteration_to_detail(iteration, task_results)
+    proposed = await proposed_version_no(session, job_id, iteration.iteration_no)
+    return iteration_to_detail(
+        iteration, task_results, proposed_agent_version_no=proposed
+    )
 
 
 @router.post(
