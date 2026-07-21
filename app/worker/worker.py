@@ -57,19 +57,14 @@ class Worker:
     async def _claim_next_job(self) -> str | None:
         async with session_factory()() as session:
             result = await session.execute(
-                select(Job)
-                .where(Job.status == JobStatus.QUEUED)
-                .order_by(Job.created_at)
-                .limit(1)
+                select(Job).where(Job.status == JobStatus.QUEUED).order_by(Job.created_at).limit(1)
             )
             job = result.scalar_one_or_none()
             if job is None:
                 return None
 
             await session.execute(
-                update(Job)
-                .where(Job.id == job.id, Job.status == JobStatus.QUEUED)
-                .values(status=JobStatus.RUNNING)
+                update(Job).where(Job.id == job.id, Job.status == JobStatus.QUEUED).values(status=JobStatus.RUNNING)
             )
             await session.commit()
             return job.id

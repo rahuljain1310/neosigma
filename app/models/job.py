@@ -28,9 +28,7 @@ class Job(IdTimestampMixin, Base):
 
     __tablename__ = "jobs"
 
-    org_id: Mapped[str] = mapped_column(
-        ForeignKey("organizations.id"), nullable=False, index=True
-    )
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
 
     status: Mapped[JobStatus] = mapped_column(

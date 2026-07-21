@@ -13,17 +13,11 @@ from app.schemas.job import JobResponse, JobSummary
 
 
 async def get_iterations(session: AsyncSession, job_id: str) -> list[Iteration]:
-    result = await session.execute(
-        select(Iteration)
-        .where(Iteration.job_id == job_id)
-        .order_by(Iteration.iteration_no)
-    )
+    result = await session.execute(select(Iteration).where(Iteration.job_id == job_id).order_by(Iteration.iteration_no))
     return list(result.scalars().all())
 
 
-async def get_iteration(
-    session: AsyncSession, job_id: str, iteration_no: int
-) -> Iteration | None:
+async def get_iteration(session: AsyncSession, job_id: str, iteration_no: int) -> Iteration | None:
     result = await session.execute(
         select(Iteration).where(
             Iteration.job_id == job_id,
@@ -33,21 +27,14 @@ async def get_iteration(
     return result.scalar_one_or_none()
 
 
-async def get_task_results_for_iteration(
-    session: AsyncSession, iteration_id: str
-) -> list[TaskResult]:
-    result = await session.execute(
-        select(TaskResult).where(TaskResult.iteration_id == iteration_id)
-    )
+async def get_task_results_for_iteration(session: AsyncSession, iteration_id: str) -> list[TaskResult]:
+    result = await session.execute(select(TaskResult).where(TaskResult.iteration_id == iteration_id))
     return list(result.scalars().all())
 
 
 async def get_latest_task_results(session: AsyncSession, job_id: str) -> list[TaskResult]:
     result = await session.execute(
-        select(Iteration)
-        .where(Iteration.job_id == job_id)
-        .order_by(Iteration.iteration_no.desc())
-        .limit(1)
+        select(Iteration).where(Iteration.job_id == job_id).order_by(Iteration.iteration_no.desc()).limit(1)
     )
     latest = result.scalar_one_or_none()
     if latest is None:
@@ -58,9 +45,7 @@ async def get_latest_task_results(session: AsyncSession, job_id: str) -> list[Ta
 async def best_agent_version_no(session: AsyncSession, job) -> int | None:
     if not job.best_agent_version_id:
         return None
-    result = await session.execute(
-        select(AgentVersion).where(AgentVersion.id == job.best_agent_version_id)
-    )
+    result = await session.execute(select(AgentVersion).where(AgentVersion.id == job.best_agent_version_id))
     av = result.scalar_one_or_none()
     return av.version_no if av else None
 
@@ -71,9 +56,7 @@ async def _task_stats_by_iteration(
     if not iteration_ids:
         return {}
 
-    result = await session.execute(
-        select(TaskResult).where(TaskResult.iteration_id.in_(iteration_ids))
-    )
+    result = await session.execute(select(TaskResult).where(TaskResult.iteration_id.in_(iteration_ids)))
     stats: dict[str, dict[str, int | list[str]]] = defaultdict(
         lambda: {
             "tasks_passed": 0,
@@ -94,9 +77,7 @@ async def _task_stats_by_iteration(
     return stats
 
 
-async def _proposed_versions_by_iteration(
-    session: AsyncSession, job_id: str
-) -> dict[int, int]:
+async def _proposed_versions_by_iteration(session: AsyncSession, job_id: str) -> dict[int, int]:
     result = await session.execute(
         select(AgentVersion).where(
             AgentVersion.job_id == job_id,
@@ -143,9 +124,7 @@ def _iteration_to_summary(
     )
 
 
-async def proposed_version_no(
-    session: AsyncSession, job_id: str, iteration_no: int
-) -> int | None:
+async def proposed_version_no(session: AsyncSession, job_id: str, iteration_no: int) -> int | None:
     result = await session.execute(
         select(AgentVersion.version_no)
         .where(
@@ -161,9 +140,7 @@ async def proposed_version_no(
 async def build_iteration_summaries(
     session: AsyncSession, job_id: str, iterations: list[Iteration]
 ) -> list[IterationSummary]:
-    stats_by_iteration = await _task_stats_by_iteration(
-        session, [i.id for i in iterations]
-    )
+    stats_by_iteration = await _task_stats_by_iteration(session, [i.id for i in iterations])
     proposed_by_iteration = await _proposed_versions_by_iteration(session, job_id)
     return [
         _iteration_to_summary(
@@ -198,9 +175,7 @@ def job_to_response(
         error=job.error,
         best_agent_version_no=best_version_no,
         iterations=iteration_summaries or [],
-        latest_task_results=[
-            TaskResultOut.model_validate(t) for t in (latest_task_results or [])
-        ],
+        latest_task_results=[TaskResultOut.model_validate(t) for t in (latest_task_results or [])],
     )
 
 
@@ -213,14 +188,8 @@ def iteration_to_detail(
     stats = {
         "tasks_passed": sum(1 for t in task_results if t.status == TaskStatus.PASSED),
         "tasks_failed": sum(1 for t in task_results if t.status == TaskStatus.FAILED),
-        "tasks_infra_error": sum(
-            1 for t in task_results if t.status == TaskStatus.INFRA_ERROR
-        ),
-        "failed_task_ids": [
-            t.task_id
-            for t in task_results
-            if t.status in {TaskStatus.FAILED, TaskStatus.INFRA_ERROR}
-        ],
+        "tasks_infra_error": sum(1 for t in task_results if t.status == TaskStatus.INFRA_ERROR),
+        "failed_task_ids": [t.task_id for t in task_results if t.status in {TaskStatus.FAILED, TaskStatus.INFRA_ERROR}],
     }
     return IterationDetail(
         **_iteration_to_summary(

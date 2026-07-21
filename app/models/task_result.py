@@ -18,9 +18,7 @@ class TaskStatus(str, enum.Enum):
 class TaskResult(IdTimestampMixin, Base):
     __tablename__ = "task_results"
 
-    iteration_id: Mapped[str] = mapped_column(
-        ForeignKey("iterations.id"), nullable=False, index=True
-    )
+    iteration_id: Mapped[str] = mapped_column(ForeignKey("iterations.id"), nullable=False, index=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), nullable=False, index=True)
     task_id: Mapped[str] = mapped_column(String(255), nullable=False)
 

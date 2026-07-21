@@ -78,10 +78,7 @@ class HarborExecutor(Executor):
         log = _combine_logs(proc.stdout, proc.stderr)
         payload, parse_error = _extract_payload(proc.stdout)
         if parse_error is not None:
-            summary = (
-                f"Harbor runner did not return JSON results (exit={proc.returncode}). "
-                f"{parse_error}"
-            )
+            summary = f"Harbor runner did not return JSON results (exit={proc.returncode}). {parse_error}"
             logger.error("[harbor job=%s] %s\n%s", self.job_id, summary, log[-4000:])
             return self._infra_failure(task_ids, summary, executor_log=log)
 
@@ -137,10 +134,7 @@ class HarborExecutor(Executor):
         try:
             import daytona  # noqa: F401
         except ImportError:
-            return (
-                "Harbor daytona extra missing. Rebuild API image with "
-                "pip install 'harbor[daytona]'."
-            )
+            return "Harbor daytona extra missing. Rebuild API image with pip install 'harbor[daytona]'."
         return None
 
     def _infra_failure(
@@ -277,7 +271,7 @@ def _extract_payload(stdout: str | None) -> tuple[dict, str | None]:
     return {}, f"no JSON results line found; last stdout line was: {preview!r}"
 
 
-_RUNNER_SNIPPET = r'''
+_RUNNER_SNIPPET = r"""
 import json, os, sys, traceback
 from benchmark import TerminalBenchRunner
 
@@ -306,4 +300,4 @@ except Exception as e:
     traceback.print_exc()
     print(json.dumps({"results": {tid: None for tid in task_ids}, "val_score": 0.0, "error": str(e)}))
     sys.exit(1)
-'''
+"""

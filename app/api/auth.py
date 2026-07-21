@@ -29,16 +29,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
     summary="Log in to an organization",
 )
 async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
-    org_result = await session.execute(
-        select(Organization).where(Organization.name == body.org_name)
-    )
+    org_result = await session.execute(select(Organization).where(Organization.name == body.org_name))
     org = org_result.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=401, detail="Invalid organization, email, or password")
 
-    user_result = await session.execute(
-        select(User).where(User.org_id == org.id, User.email == body.email)
-    )
+    user_result = await session.execute(select(User).where(User.org_id == org.id, User.email == body.email))
     user = user_result.scalar_one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid organization, email, or password")
@@ -54,9 +50,7 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
 )
 async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
     token_hash = hash_token(body.refresh_token)
-    result = await session.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-    )
+    result = await session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     stored = result.scalar_one_or_none()
     if stored is None or not stored.is_active():
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
@@ -92,8 +86,7 @@ async def _issue_tokens(session: AsyncSession, user: User) -> TokenResponse:
     refresh = RefreshToken(
         user_id=user.id,
         token_hash=hash_token(refresh_plain),
-        expires_at=datetime.now(timezone.utc)
-        + timedelta(days=settings.refresh_token_expire_days),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days),
     )
     session.add(refresh)
     await session.commit()

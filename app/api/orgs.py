@@ -50,9 +50,7 @@ async def create_user(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    existing = await session.execute(
-        select(User).where(User.org_id == org_id, User.email == body.email)
-    )
+    existing = await session.execute(select(User).where(User.org_id == org_id, User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="User already exists in this organization")
 

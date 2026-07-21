@@ -5,7 +5,7 @@ COMPOSE ?= docker compose
 API_PORT ?= 8000
 OPTIMIZER_MODE ?= heuristic
 
-.PHONY: help install env up down logs restart dev test openapi client clean
+.PHONY: help install env up down logs restart dev test format openapi client clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -33,6 +33,9 @@ dev: install env ## Run API locally with hot reload (Postgres must be running)
 
 test: install ## Run tests
 	OPTIMIZER_MODE=heuristic $(UV) run pytest -q
+
+format: install ## Format Python with ruff
+	$(UV) run ruff format .
 
 openapi: install ## Export OpenAPI spec to openapi.json
 	$(UV) run python scripts/export_openapi.py

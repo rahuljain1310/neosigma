@@ -1,4 +1,10 @@
-from app.schemas.auth import LoginRequest, RefreshRequest, TokenResponse, UserCreate, UserResponse
+from app.schemas.auth import (
+    LoginRequest,
+    RefreshRequest,
+    TokenResponse,
+    UserCreate,
+    UserResponse,
+)
 from app.schemas.common import ErrorResponse, HealthResponse
 from app.schemas.iteration import IterationDetail, IterationSummary, TaskResultOut
 from app.schemas.job import JobCreate, JobResponse, JobSummary

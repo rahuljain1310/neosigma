@@ -189,7 +189,7 @@ class Optimizer:
 
 
 def _inject_after_instruction(agent: str, snippet: str) -> str:
-    marker = 'When you are done, send a final text message'
+    marker = "When you are done, send a final text message"
     if marker in agent:
         return agent.replace(marker, snippet + marker, 1)
     if '"""' in agent:
@@ -199,9 +199,7 @@ def _inject_after_instruction(agent: str, snippet: str) -> str:
     return agent + "\n" + snippet
 
 
-def build_failure_context(
-    failing_tasks: list[TaskExecution], *, limit: int = 8
-) -> list[dict]:
+def build_failure_context(failing_tasks: list[TaskExecution], *, limit: int = 8) -> list[dict]:
     context: list[dict] = []
     for task in failing_tasks[:limit]:
         context.append(

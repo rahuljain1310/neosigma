@@ -11,7 +11,11 @@ from app.harness.template import AGENT_TEMPLATE
 from app.models.iteration import Iteration, IterationPhase
 from app.models.job import Job, JobStatus, StopReason
 from app.optimizer import Optimizer
-from app.services.agent_versions import create_agent_version, get_agent_version, save_iteration_results
+from app.services.agent_versions import (
+    create_agent_version,
+    get_agent_version,
+    save_iteration_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +52,7 @@ class JobProcessor:
         executor = get_executor(job.id, job.executor, job.config)
         optimizer_mode = self.optimizer.effective_mode()
         logger.info(
-            "[job %s] starting optimization loop: executor=%s optimizer_mode=%s "
-            "max_iterations=%s patience=%s tasks=%s",
+            "[job %s] starting optimization loop: executor=%s optimizer_mode=%s max_iterations=%s patience=%s tasks=%s",
             job.id,
             job.executor,
             optimizer_mode,
@@ -153,8 +156,7 @@ class JobProcessor:
                     iteration.accepted = False
                     no_improve += 1
                     logger.info(
-                        "[job %s] iter %s rejected: val_score=%.3f (best=%.3f) "
-                        "no_improve=%s/%s",
+                        "[job %s] iter %s rejected: val_score=%.3f (best=%.3f) no_improve=%s/%s",
                         job.id,
                         iteration_no,
                         result.val_score,
@@ -226,8 +228,7 @@ class JobProcessor:
             else:
                 diff_preview = "(no diff — agent unchanged)"
             logger.info(
-                "[job %s] iter %s proposal ready: source_agent_v=%s -> agent_v=%s "
-                "failing_tasks=%s rationale=%s\n%s",
+                "[job %s] iter %s proposal ready: source_agent_v=%s -> agent_v=%s failing_tasks=%s rationale=%s\n%s",
                 job.id,
                 iteration_no,
                 best_version_no,

@@ -35,7 +35,14 @@ class HarnessWorkspace:
         self.root.mkdir(parents=True, exist_ok=True)
         if not (self.root / "benchmark.py").exists():
             subprocess.run(
-                ["git", "clone", "--depth", "1", settings.harness_repo_url, str(self.root)],
+                [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    settings.harness_repo_url,
+                    str(self.root),
+                ],
                 check=True,
                 capture_output=True,
                 text=True,

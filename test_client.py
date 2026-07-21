@@ -34,7 +34,6 @@ def login(client: httpx.Client, org_name: str, email: str, password: str) -> str
     return data["access_token"]
 
 
-
 def _benchmark_snapshot(it: dict[str, Any]) -> tuple[Any, ...]:
     return (
         it.get("val_score"),
@@ -86,16 +85,10 @@ def _print_iteration_update(it: dict[str, Any], *, best_val_score: float | None)
         )
 
     if it.get("accepted") is True and iteration_no > 0:
-        print(
-            f"  [iter {iteration_no}] accepted — new best_val_score={best_val_score:.3f} "
-            f"(agent_v={agent_v})"
-        )
+        print(f"  [iter {iteration_no}] accepted — new best_val_score={best_val_score:.3f} (agent_v={agent_v})")
     elif it.get("accepted") is False:
         best_note = f"{best_val_score:.3f}" if best_val_score is not None else "n/a"
-        print(
-            f"  [iter {iteration_no}] rejected — val_score={val_score:.3f} "
-            f"(best remains {best_note})"
-        )
+        print(f"  [iter {iteration_no}] rejected — val_score={val_score:.3f} (best remains {best_note})")
 
 
 def main() -> int:
@@ -166,9 +159,7 @@ def main() -> int:
 
             if status != last_status:
                 score_note = (
-                    f"best_val_score={best_val_score:.3f}"
-                    if best_val_score is not None
-                    else "best_val_score=None"
+                    f"best_val_score={best_val_score:.3f}" if best_val_score is not None else "best_val_score=None"
                 )
                 print(f"  job status={status} {score_note}")
                 last_status = status
@@ -176,10 +167,7 @@ def main() -> int:
             for it in job.get("iterations", []):
                 iteration_no = it["iteration_no"]
                 bench_key = _benchmark_snapshot(it)
-                if (
-                    it.get("val_score") is not None
-                    and seen_benchmarks.get(iteration_no) != bench_key
-                ):
+                if it.get("val_score") is not None and seen_benchmarks.get(iteration_no) != bench_key:
                     _print_iteration_update(it, best_val_score=best_val_score)
                     seen_benchmarks[iteration_no] = bench_key
 
@@ -204,9 +192,7 @@ def main() -> int:
                     and it.get("llm_finished_at")
                     and iteration_no not in seen_debug
                 ):
-                    detail, proposed_version = fetch_iteration_debug_bundle(
-                        client, job_id, iteration_no, headers
-                    )
+                    detail, proposed_version = fetch_iteration_debug_bundle(client, job_id, iteration_no, headers)
                     print_iteration_debug(
                         iteration_no=iteration_no,
                         detail=detail,
@@ -226,17 +212,19 @@ def main() -> int:
             time.sleep(args.poll_interval)
 
         print("\n=== Job summary ===")
-        print(json.dumps(
-            {
-                "id": job["id"],
-                "status": job["status"],
-                "stop_reason": job.get("stop_reason"),
-                "best_val_score": job.get("best_val_score"),
-                "best_agent_version_no": job.get("best_agent_version_no"),
-                "task_ids": job.get("task_ids"),
-            },
-            indent=2,
-        ))
+        print(
+            json.dumps(
+                {
+                    "id": job["id"],
+                    "status": job["status"],
+                    "stop_reason": job.get("stop_reason"),
+                    "best_val_score": job.get("best_val_score"),
+                    "best_agent_version_no": job.get("best_agent_version_no"),
+                    "task_ids": job.get("task_ids"),
+                },
+                indent=2,
+            )
+        )
 
         print("\n=== Latest task results ===")
         for tr in job.get("latest_task_results", []):

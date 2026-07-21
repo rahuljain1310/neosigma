@@ -114,9 +114,7 @@ async def get_iteration_detail(
         raise HTTPException(status_code=404, detail="Iteration not found")
     task_results = await get_task_results_for_iteration(session, iteration.id)
     proposed = await proposed_version_no(session, job_id, iteration.iteration_no)
-    return iteration_to_detail(
-        iteration, task_results, proposed_agent_version_no=proposed
-    )
+    return iteration_to_detail(iteration, task_results, proposed_agent_version_no=proposed)
 
 
 @router.get(

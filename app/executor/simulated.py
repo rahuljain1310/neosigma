@@ -53,7 +53,10 @@ class SimulatedExecutor(Executor):
                     status=status,
                     failure_summary=summary,
                     trace=trace,
-                    verifier_result={"task_name": task_id, "verifier_result": {"rewards": {"reward": reward}}},
+                    verifier_result={
+                        "task_name": task_id,
+                        "verifier_result": {"rewards": {"reward": reward}},
+                    },
                 )
             )
 
@@ -77,14 +80,12 @@ def _stable_pass(task_id: str) -> bool:
 
 
 def _fake_trace(task_id: str, passed: bool, agent_content: str) -> list[dict]:
-    snippet = agent_content[agent_content.find("AGENT_INSTRUCTION"):][:400]
+    snippet = agent_content[agent_content.find("AGENT_INSTRUCTION") :][:400]
     return [
         {"role": "system", "content": snippet},
         {"role": "user", "content": f"Task: {task_id}"},
         {
             "role": "assistant",
-            "content": "Explored environment and attempted solution."
-            if passed
-            else "Gave up early without verifying.",
+            "content": "Explored environment and attempted solution." if passed else "Gave up early without verifying.",
         },
     ]

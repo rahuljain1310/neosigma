@@ -86,17 +86,13 @@ def dump_iteration_debug(
     if detail.get("llm_prompt"):
         (out / "optimizer_prompt.txt").write_text(detail["llm_prompt"])
     if detail.get("optimizer_context"):
-        (out / "optimizer_context.json").write_text(
-            json.dumps(detail["optimizer_context"], indent=2, default=str)
-        )
+        (out / "optimizer_context.json").write_text(json.dumps(detail["optimizer_context"], indent=2, default=str))
 
     traces_dir = out / "benchmark_traces"
     traces_dir.mkdir(exist_ok=True)
     for tr in detail.get("task_results") or []:
         task_id = tr["task_id"]
-        (traces_dir / f"{task_id}.json").write_text(
-            json.dumps(tr, indent=2, default=str)
-        )
+        (traces_dir / f"{task_id}.json").write_text(json.dumps(tr, indent=2, default=str))
 
     proposed_no = detail.get("proposed_agent_version_no")
     if proposed_version:
@@ -150,9 +146,7 @@ def debug_completed_job(
 
     for it in iterations:
         iteration_no = it["iteration_no"]
-        detail, proposed_version = fetch_iteration_debug_bundle(
-            client, job_id, iteration_no, headers
-        )
+        detail, proposed_version = fetch_iteration_debug_bundle(client, job_id, iteration_no, headers)
         if print_stdout:
             print_iteration_debug(
                 iteration_no=iteration_no,

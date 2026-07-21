@@ -188,7 +188,6 @@ DEFAULT_TASK_IDS = [
     "extract-elf",
     "log-summary-date-ranges",
     "gcode-to-text",
-
     ## Slower (tmp - hide)
     # "break-filter-js-from-html",
     # "fix-git",
@@ -197,7 +196,6 @@ DEFAULT_TASK_IDS = [
     # "sqlite-with-gcov",
     # "cobol-modernization",
     # "path-tracing",
-
     ## Removed
     # "qemu-alpine",
     # "configure-git-webserver",

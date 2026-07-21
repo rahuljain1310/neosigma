@@ -19,6 +19,4 @@ class Base(DeclarativeBase):
 
 class IdTimestampMixin:
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

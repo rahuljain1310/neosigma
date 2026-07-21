@@ -49,9 +49,7 @@ async def get_agent_version(session: AsyncSession, job_id: str, version_no: int)
 
 async def list_agent_versions(session: AsyncSession, job_id: str) -> list[AgentVersion]:
     result = await session.execute(
-        select(AgentVersion)
-        .where(AgentVersion.job_id == job_id)
-        .order_by(AgentVersion.version_no)
+        select(AgentVersion).where(AgentVersion.job_id == job_id).order_by(AgentVersion.version_no)
     )
     return list(result.scalars().all())
 
@@ -80,4 +78,3 @@ async def save_iteration_results(
     iteration.executor_log = benchmark_result.executor_log
     iteration.bench_finished_at = datetime.now(timezone.utc)
     iteration.phase = IterationPhase.ANALYZING
-
