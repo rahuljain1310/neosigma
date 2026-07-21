@@ -1,0 +1,2558 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Agent Optimization Service",
+    "description": "Runs an agent against a TerminalBench subset in sandboxes, mines failures, and iteratively improves agent/agent.py via an LLM optimization loop.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log in to an organization",
+        "operationId": "login_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Refresh access token",
+        "operationId": "refresh_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Revoke a refresh token",
+        "operationId": "logout_auth_logout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get the current authenticated user",
+        "operationId": "me_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/jobs": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Submit a benchmark optimization job",
+        "operationId": "create_job_jobs_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List jobs visible to the current user",
+        "operationId": "list_jobs_jobs_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/JobStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobSummary"
+                  },
+                  "title": "Response List Jobs Jobs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get job status and latest results",
+        "operationId": "get_job_jobs__job_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/iterations": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List all iterations for a job",
+        "operationId": "list_iterations_jobs__job_id__iterations_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IterationSummary"
+                  },
+                  "title": "Response List Iterations Jobs  Job Id  Iterations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/iterations/{iteration_no}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get full detail for one iteration (traces, LLM artifacts)",
+        "operationId": "get_iteration_detail_jobs__job_id__iterations__iteration_no__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "iteration_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Iteration No"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IterationDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/agent-versions": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List all agent versions for a job",
+        "operationId": "list_job_agent_versions_jobs__job_id__agent_versions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentVersionSummary"
+                  },
+                  "title": "Response List Job Agent Versions Jobs  Job Id  Agent Versions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/agent-versions/{version_no}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get one agent version (full agent.py + diff)",
+        "operationId": "get_job_agent_version_jobs__job_id__agent_versions__version_no__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "version_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version No"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentVersionDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Cancel a queued or running job",
+        "operationId": "cancel_job_jobs__job_id__cancel_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs": {
+      "post": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Create an organization",
+        "operationId": "create_org_orgs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{org_id}/users": {
+      "post": {
+        "tags": [
+          "organizations"
+        ],
+        "summary": "Create a user in an organization",
+        "operationId": "create_user_orgs__org_id__users_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "org_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Org Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Service health check",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentVersionDetail": {
+        "properties": {
+          "version_no": {
+            "type": "integer",
+            "title": "Version No"
+          },
+          "parent_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Version No"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "created_by_iteration": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Iteration",
+            "description": "Iteration whose optimizer produced this version (None for v0)."
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff",
+            "description": "Unified diff against parent version."
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Full agent/agent.py source for this version."
+          }
+        },
+        "type": "object",
+        "required": [
+          "version_no",
+          "parent_version_no",
+          "sha256",
+          "content"
+        ],
+        "title": "AgentVersionDetail"
+      },
+      "AgentVersionSummary": {
+        "properties": {
+          "version_no": {
+            "type": "integer",
+            "title": "Version No"
+          },
+          "parent_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Version No"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "created_by_iteration": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Iteration",
+            "description": "Iteration whose optimizer produced this version (None for v0)."
+          },
+          "diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff",
+            "description": "Unified diff against parent version."
+          }
+        },
+        "type": "object",
+        "required": [
+          "version_no",
+          "parent_version_no",
+          "sha256"
+        ],
+        "title": "AgentVersionSummary"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthResponse"
+      },
+      "IterationDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "iteration_no": {
+            "type": "integer",
+            "title": "Iteration No"
+          },
+          "agent_version_no": {
+            "type": "integer",
+            "title": "Agent Version No"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/IterationPhase"
+          },
+          "val_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Val Score"
+          },
+          "accepted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted"
+          },
+          "tasks_pending": {
+            "type": "integer",
+            "title": "Tasks Pending",
+            "default": 0
+          },
+          "tasks_running": {
+            "type": "integer",
+            "title": "Tasks Running",
+            "default": 0
+          },
+          "tasks_completed": {
+            "type": "integer",
+            "title": "Tasks Completed",
+            "default": 0
+          },
+          "tasks_passed": {
+            "type": "integer",
+            "title": "Tasks Passed",
+            "default": 0
+          },
+          "tasks_failed": {
+            "type": "integer",
+            "title": "Tasks Failed",
+            "default": 0
+          },
+          "tasks_infra_error": {
+            "type": "integer",
+            "title": "Tasks Infra Error",
+            "default": 0
+          },
+          "failed_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed Task Ids"
+          },
+          "proposed_agent_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed Agent Version No",
+            "description": "Agent version created by this iteration's optimizer proposal."
+          },
+          "bench_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bench Started At"
+          },
+          "bench_finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bench Finished At"
+          },
+          "llm_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Started At"
+          },
+          "llm_finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Finished At"
+          },
+          "improvement_rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvement Rationale"
+          },
+          "learnings": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learnings"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "llm_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Prompt"
+          },
+          "llm_response": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Response"
+          },
+          "executor_log": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executor Log"
+          },
+          "optimizer_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OptimizerContext"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimizer Context",
+            "description": "Failing tasks/traces and source agent version fed to the optimizer."
+          },
+          "task_results": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResultOut"
+            },
+            "type": "array",
+            "title": "Task Results",
+            "description": "Per-task structured results for this iteration (M1 contract)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "iteration_no",
+          "agent_version_no",
+          "phase",
+          "val_score",
+          "accepted",
+          "bench_started_at",
+          "bench_finished_at",
+          "llm_started_at",
+          "llm_finished_at",
+          "improvement_rationale",
+          "learnings",
+          "error",
+          "created_at"
+        ],
+        "title": "IterationDetail"
+      },
+      "IterationPhase": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running_benchmark",
+          "analyzing",
+          "proposing",
+          "done",
+          "failed"
+        ],
+        "title": "IterationPhase"
+      },
+      "IterationSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "iteration_no": {
+            "type": "integer",
+            "title": "Iteration No"
+          },
+          "agent_version_no": {
+            "type": "integer",
+            "title": "Agent Version No"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/IterationPhase"
+          },
+          "val_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Val Score"
+          },
+          "accepted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted"
+          },
+          "tasks_pending": {
+            "type": "integer",
+            "title": "Tasks Pending",
+            "default": 0
+          },
+          "tasks_running": {
+            "type": "integer",
+            "title": "Tasks Running",
+            "default": 0
+          },
+          "tasks_completed": {
+            "type": "integer",
+            "title": "Tasks Completed",
+            "default": 0
+          },
+          "tasks_passed": {
+            "type": "integer",
+            "title": "Tasks Passed",
+            "default": 0
+          },
+          "tasks_failed": {
+            "type": "integer",
+            "title": "Tasks Failed",
+            "default": 0
+          },
+          "tasks_infra_error": {
+            "type": "integer",
+            "title": "Tasks Infra Error",
+            "default": 0
+          },
+          "failed_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed Task Ids"
+          },
+          "proposed_agent_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed Agent Version No",
+            "description": "Agent version created by this iteration's optimizer proposal."
+          },
+          "bench_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bench Started At"
+          },
+          "bench_finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bench Finished At"
+          },
+          "llm_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Started At"
+          },
+          "llm_finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Finished At"
+          },
+          "improvement_rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Improvement Rationale"
+          },
+          "learnings": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learnings"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "iteration_no",
+          "agent_version_no",
+          "phase",
+          "val_score",
+          "accepted",
+          "bench_started_at",
+          "bench_finished_at",
+          "llm_started_at",
+          "llm_finished_at",
+          "improvement_rationale",
+          "learnings",
+          "error",
+          "created_at"
+        ],
+        "title": "IterationSummary"
+      },
+      "JobCreate": {
+        "properties": {
+          "task_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Ids",
+            "description": "Benchmark task IDs to run. Defaults to the built-in subset.",
+            "examples": [
+              [
+                "regex-log",
+                "cobol-modernization"
+              ]
+            ]
+          },
+          "max_iterations": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Iterations",
+            "default": 5
+          },
+          "patience": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Patience",
+            "description": "Stop after this many consecutive iterations without score improvement.",
+            "default": 3
+          },
+          "executor": {
+            "type": "string",
+            "enum": [
+              "simulated",
+              "harbor"
+            ],
+            "title": "Executor",
+            "description": "simulated = deterministic fake benchmark (M1/M2/M4 dev); harbor = real Terminal-Bench via Harbor+Daytona (M3).",
+            "default": "simulated"
+          },
+          "config": {
+            "$ref": "#/components/schemas/JobExecutorConfig",
+            "description": "Executor-specific overrides (agent_model, n_concurrent, etc.)."
+          }
+        },
+        "type": "object",
+        "title": "JobCreate"
+      },
+      "JobExecutorConfig": {
+        "properties": {
+          "agent_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Model",
+            "description": "Override model for the agent under test."
+          },
+          "n_concurrent": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Concurrent",
+            "description": "Max concurrent sandbox tasks."
+          },
+          "per_task_timeout": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Task Timeout",
+            "description": "Per-task agent timeout in seconds (Harbor executor)."
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "JobExecutorConfig",
+        "description": "Executor-specific overrides. Unknown keys are preserved."
+      },
+      "JobResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Job ID (32-character lowercase hex)."
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Task Ids"
+          },
+          "max_iterations": {
+            "type": "integer",
+            "title": "Max Iterations"
+          },
+          "patience": {
+            "type": "integer",
+            "title": "Patience"
+          },
+          "executor": {
+            "type": "string",
+            "title": "Executor"
+          },
+          "best_val_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Val Score"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "learnings": {
+            "type": "string",
+            "title": "Learnings"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "best_agent_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Agent Version No"
+          },
+          "iterations": {
+            "items": {
+              "$ref": "#/components/schemas/IterationSummary"
+            },
+            "type": "array",
+            "title": "Iterations"
+          },
+          "latest_task_results": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResultOut"
+            },
+            "type": "array",
+            "title": "Latest Task Results",
+            "description": "Structured M1 result from the most recent completed iteration: per-task pass/fail status and failure summaries. Empty while the job is still queued/running with no finished iteration."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "stop_reason",
+          "task_ids",
+          "max_iterations",
+          "patience",
+          "executor",
+          "best_val_score",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "learnings",
+          "error"
+        ],
+        "title": "JobResponse",
+        "description": "Job status plus structured benchmark results when available.\n\nWhen `status` is `completed`, `latest_task_results` is the M1 deliverable:\nwhich tasks passed/failed and a summary of observed failures.",
+        "examples": [
+          {
+            "best_agent_version_no": 1,
+            "best_val_score": 0.5,
+            "created_at": "2026-07-21T12:00:00Z",
+            "executor": "simulated",
+            "finished_at": "2026-07-21T12:01:00Z",
+            "id": "a1b2c3d4e5f6789012345678abcdef01",
+            "iterations": [],
+            "latest_task_results": [
+              {
+                "reward": 1.0,
+                "status": "passed",
+                "task_id": "regex-log"
+              },
+              {
+                "failure_summary": "Simulated failure on cobol-modernization: agent did not explore environment or verify solution.",
+                "reward": 0.0,
+                "status": "failed",
+                "task_id": "cobol-modernization"
+              }
+            ],
+            "learnings": "",
+            "max_iterations": 2,
+            "patience": 2,
+            "started_at": "2026-07-21T12:00:01Z",
+            "status": "completed",
+            "stop_reason": "max_iterations",
+            "task_ids": [
+              "regex-log",
+              "cobol-modernization"
+            ]
+          }
+        ]
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "JobStatus"
+      },
+      "JobSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Job ID (32-character lowercase hex)."
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Task Ids"
+          },
+          "max_iterations": {
+            "type": "integer",
+            "title": "Max Iterations"
+          },
+          "patience": {
+            "type": "integer",
+            "title": "Patience"
+          },
+          "executor": {
+            "type": "string",
+            "title": "Executor"
+          },
+          "best_val_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Val Score"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "stop_reason",
+          "task_ids",
+          "max_iterations",
+          "patience",
+          "executor",
+          "best_val_score",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "JobSummary"
+      },
+      "LoginRequest": {
+        "properties": {
+          "org_name": {
+            "type": "string",
+            "title": "Org Name",
+            "examples": [
+              "default"
+            ]
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email",
+            "examples": [
+              "admin@example.com"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "examples": [
+              "assignment-password"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_name",
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest"
+      },
+      "LogoutRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "description": "Refresh token to revoke."
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "LogoutRequest"
+      },
+      "LogoutResponse": {
+        "properties": {
+          "revoked": {
+            "type": "boolean",
+            "title": "Revoked",
+            "description": "True if a matching active refresh token was revoked."
+          }
+        },
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "title": "LogoutResponse"
+      },
+      "MeResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "User ID (32-character lowercase hex)."
+          },
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "Organization ID (32-character lowercase hex)."
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "admin manages the org; member submits/views own jobs."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "org_name": {
+            "type": "string",
+            "title": "Org Name",
+            "description": "Name of the user's organization."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "email",
+          "name",
+          "role",
+          "created_at",
+          "org_name"
+        ],
+        "title": "MeResponse",
+        "description": "Current authenticated user plus organization name."
+      },
+      "OptimizerContext": {
+        "properties": {
+          "source_agent_version_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Agent Version No"
+          },
+          "failing_task_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failing Task Count"
+          },
+          "passed_task_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passed Task Count"
+          },
+          "infra_error_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Infra Error Count"
+          },
+          "failure_context": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OptimizerTaskSnippet"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Context"
+          },
+          "success_context": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OptimizerTaskSnippet"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Context"
+          },
+          "infra_context": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OptimizerTaskSnippet"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Infra Context"
+          },
+          "recent_attempt": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recent Attempt"
+          },
+          "optimizer_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimizer Mode"
+          },
+          "configured_optimizer_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured Optimizer Mode"
+          },
+          "optimizer_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimizer Model"
+          },
+          "agent_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Model"
+          },
+          "prompt_chars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Chars"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "OptimizerContext",
+        "description": "Snapshot of inputs the optimizer used for one proposal."
+      },
+      "OptimizerTaskSnippet": {
+        "properties": {
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "failure_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Summary"
+          },
+          "reward": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reward"
+          },
+          "trace": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace"
+          },
+          "verifier": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "OptimizerTaskSnippet",
+        "description": "Compact task context fed into the optimizer prompt."
+      },
+      "OrganizationCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "examples": [
+              "acme-corp"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "OrganizationCreate"
+      },
+      "OrganizationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "title": "OrganizationResponse"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token",
+            "description": "Refresh token previously issued by login or refresh."
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest"
+      },
+      "Role": {
+        "type": "string",
+        "enum": [
+          "admin",
+          "member"
+        ],
+        "title": "Role"
+      },
+      "StopReason": {
+        "type": "string",
+        "enum": [
+          "max_iterations",
+          "no_improvement",
+          "all_tasks_passed",
+          "cancelled",
+          "error"
+        ],
+        "title": "StopReason"
+      },
+      "TaskResultOut": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id",
+            "description": "TerminalBench task identifier."
+          },
+          "reward": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reward",
+            "description": "Task reward in [0, 1], or null if unavailable."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "description": "passed | failed | infra_error."
+          },
+          "failure_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Summary",
+            "description": "Short human-readable summary of why the task failed (null when passed)."
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TraceMessage"
+                },
+                "type": "array"
+              },
+              {
+                "$ref": "#/components/schemas/TraceEnvelope"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace",
+            "description": "Agent conversation / tool-call trace for this task."
+          },
+          "verifier_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifierResult"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier Result",
+            "description": "Raw verifier payload from the sandbox runner."
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "reward",
+          "status"
+        ],
+        "title": "TaskResultOut",
+        "description": "Structured per-task benchmark result (M1 output contract).",
+        "examples": [
+          {
+            "reward": 1.0,
+            "status": "passed",
+            "task_id": "regex-log",
+            "trace": [
+              {
+                "content": "Task: regex-log",
+                "role": "user"
+              },
+              {
+                "content": "Explored environment and attempted solution.",
+                "role": "assistant"
+              }
+            ],
+            "verifier_result": {
+              "task_name": "regex-log",
+              "verifier_result": {
+                "rewards": {
+                  "reward": 1.0
+                }
+              }
+            }
+          },
+          {
+            "failure_summary": "Simulated failure on cobol-modernization: agent did not explore environment or verify solution.",
+            "reward": 0.0,
+            "status": "failed",
+            "task_id": "cobol-modernization",
+            "trace": [
+              {
+                "content": "Task: cobol-modernization",
+                "role": "user"
+              },
+              {
+                "content": "Gave up early without verifying.",
+                "role": "assistant"
+              }
+            ],
+            "verifier_result": {
+              "task_name": "cobol-modernization",
+              "verifier_result": {
+                "rewards": {
+                  "reward": 0.0
+                }
+              }
+            }
+          }
+        ]
+      },
+      "TaskStatus": {
+        "type": "string",
+        "enum": [
+          "passed",
+          "failed",
+          "infra_error"
+        ],
+        "title": "TaskStatus"
+      },
+      "TokenResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          },
+          "token_type": {
+            "type": "string",
+            "title": "Token Type",
+            "default": "bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In",
+            "description": "Access token lifetime in seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "refresh_token",
+          "expires_in"
+        ],
+        "title": "TokenResponse"
+      },
+      "TraceEnvelope": {
+        "properties": {
+          "messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TraceMessage"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messages"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TraceMessage"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "TraceEnvelope",
+        "description": "Harbor-style wrapper when the trace is not a bare message list."
+      },
+      "TraceMessage": {
+        "properties": {
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role",
+            "description": "Message role (system, user, assistant, tool, \u2026)."
+          },
+          "content": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content",
+            "description": "Message content (string or structured parts)."
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "TraceMessage",
+        "description": "One turn in an agent conversation trace."
+      },
+      "UserCreate": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email",
+            "examples": [
+              "alice@example.com"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "title": "Password",
+            "examples": [
+              "assignment-password"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "examples": [
+              "alice"
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "default": "member"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password",
+          "name"
+        ],
+        "title": "UserCreate"
+      },
+      "UserResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "User ID (32-character lowercase hex)."
+          },
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "Organization ID (32-character lowercase hex)."
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "admin manages the org; member submits/views own jobs."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "email",
+          "name",
+          "role",
+          "created_at"
+        ],
+        "title": "UserResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerifierInner": {
+        "properties": {
+          "rewards": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifierRewards"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "VerifierInner"
+      },
+      "VerifierResult": {
+        "properties": {
+          "task_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Name"
+          },
+          "verifier_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifierInner"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verifier Result"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "VerifierResult",
+        "description": "Sandbox verifier output for a single task."
+      },
+      "VerifierRewards": {
+        "properties": {
+          "reward": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reward"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "VerifierRewards"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "description": "JWT access token from POST /auth/login or /auth/refresh.",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

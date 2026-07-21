@@ -6,5 +6,4 @@ data/
 .debug/
 .pytest_cache/
 uv.lock
-openapi.json
 problem.pdf

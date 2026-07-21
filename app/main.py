@@ -2,18 +2,23 @@ from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from app.api.auth import router as auth_router
 from app.api.jobs import router as jobs_router
 from app.api.orgs import router as orgs_router
 from app.config import get_settings
 from app.db import dispose_engine, init_db, session_factory
-from app.schemas.common import HealthResponse
 from app.seed import ensure_seed_data
 from app.worker import Worker
 
 logger = logging.getLogger(__name__)
 _worker: Worker | None = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    version: str
 
 
 @asynccontextmanager
@@ -52,6 +57,6 @@ app.include_router(jobs_router)
 app.include_router(orgs_router)
 
 
-@app.get("/health", response_model=HealthResponse, tags=["system"])
+@app.get("/health", response_model=HealthResponse, tags=["system"], summary="Service health check")
 async def health() -> HealthResponse:
     return HealthResponse(status="ok", version="0.1.0")

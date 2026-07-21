@@ -6,14 +6,13 @@ import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
 from app.models.user import Role, User
 
-_bearer = HTTPBearer(auto_error=False)
+_bearer = HTTPBearer(auto_error=False, description="JWT access token from POST /auth/login or /auth/refresh.")
 
 # Hardcoded assignment default — used by seed + test_client.
 DEFAULT_ORG_NAME = "default"
@@ -51,11 +50,37 @@ def create_access_token(user: User) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
+async def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    session: AsyncSession = Depends(get_session),
+) -> User | None:
+    """Return the user when a valid bearer token is present; otherwise None.
+
+    Invalid/expired tokens are treated as absent so first-user org bootstrap
+    is not blocked by automatically attached stale credentials.
+    """
+    if credentials is None:
+        return None
+    try:
+        return await _user_from_credentials(credentials, session)
+    except HTTPException:
+        return None
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
     session: AsyncSession = Depends(get_session),
 ) -> User:
     if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header. Use: Bearer <access_token>",
+        )
+    return await _user_from_credentials(credentials, session)
+
+
+async def _user_from_credentials(credentials: HTTPAuthorizationCredentials, session: AsyncSession) -> User:
+    if credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid Authorization header. Use: Bearer <access_token>",

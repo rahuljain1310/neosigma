@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,18 +16,19 @@ from app.db import get_session
 from app.models.organization import Organization
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RefreshRequest, TokenResponse
-from app.schemas.common import ErrorResponse
+from app.schemas.auth import (
+    LoginRequest,
+    LogoutRequest,
+    LogoutResponse,
+    MeResponse,
+    RefreshRequest,
+    TokenResponse,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-    responses={401: {"model": ErrorResponse}},
-    summary="Log in to an organization",
-)
+@router.post("/login", response_model=TokenResponse, summary="Log in to an organization")
 async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
     org_result = await session.execute(select(Organization).where(Organization.name == body.org_name))
     org = org_result.scalar_one_or_none()
@@ -42,12 +43,7 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
     return await _issue_tokens(session, user)
 
 
-@router.post(
-    "/refresh",
-    response_model=TokenResponse,
-    responses={401: {"model": ErrorResponse}},
-    summary="Refresh access token",
-)
+@router.post("/refresh", response_model=TokenResponse, summary="Refresh access token")
 async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_session)) -> TokenResponse:
     token_hash = hash_token(body.refresh_token)
     result = await session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
@@ -63,19 +59,36 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
     return await _issue_tokens(session, user)
 
 
-@router.get(
-    "/me",
-    responses={401: {"model": ErrorResponse}},
-    summary="Get the current authenticated user",
-)
-async def me(user: User = Depends(get_current_user)) -> dict:
-    return {
-        "id": user.id,
-        "org_id": user.org_id,
-        "email": user.email,
-        "name": user.name,
-        "role": user.role.value,
-    }
+@router.post("/logout", response_model=LogoutResponse, summary="Revoke a refresh token")
+async def logout(body: LogoutRequest, session: AsyncSession = Depends(get_session)) -> LogoutResponse:
+    token_hash = hash_token(body.refresh_token)
+    result = await session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+    stored = result.scalar_one_or_none()
+    if stored is None or not stored.is_active():
+        return LogoutResponse(revoked=False)
+
+    stored.revoked_at = datetime.now(timezone.utc)
+    await session.commit()
+    return LogoutResponse(revoked=True)
+
+
+@router.get("/me", response_model=MeResponse, summary="Get the current authenticated user")
+async def me(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> MeResponse:
+    org = await session.get(Organization, user.org_id)
+    if org is None:
+        raise HTTPException(status_code=401, detail="Organization not found")
+    return MeResponse(
+        id=user.id,
+        org_id=user.org_id,
+        org_name=org.name,
+        email=user.email,
+        name=user.name,
+        role=user.role,
+        created_at=user.created_at,
+    )
 
 
 async def _issue_tokens(session: AsyncSession, user: User) -> TokenResponse:

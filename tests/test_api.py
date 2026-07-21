@@ -71,7 +71,7 @@ async def test_health(test_env):
 
 
 @pytest.mark.asyncio
-async def test_login_and_refresh(test_env):
+async def test_login_refresh_me_and_logout(test_env):
     client, _, org_name, email = test_env
     login = await client.post(
         "/auth/login",
@@ -82,12 +82,105 @@ async def test_login_and_refresh(test_env):
     assert "access_token" in tokens
     assert "refresh_token" in tokens
 
+    me = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert me.status_code == 200
+    profile = me.json()
+    assert profile["email"] == email
+    assert profile["org_name"] == org_name
+    assert profile["role"] == "admin"
+
     refreshed = await client.post(
         "/auth/refresh",
         json={"refresh_token": tokens["refresh_token"]},
     )
     assert refreshed.status_code == 200
     assert refreshed.json()["access_token"]
+    new_refresh = refreshed.json()["refresh_token"]
+
+    # Old refresh token was rotated away.
+    reused = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": tokens["refresh_token"]},
+    )
+    assert reused.status_code == 401
+    assert "Invalid or expired refresh token" in reused.json()["detail"]
+
+    logout = await client.post("/auth/logout", json={"refresh_token": new_refresh})
+    assert logout.status_code == 200
+    assert logout.json()["revoked"] is True
+
+    after_logout = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": new_refresh},
+    )
+    assert after_logout.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_org_user_bootstrap_then_requires_admin(test_env):
+    client, _, _, _ = test_env
+
+    created_org = await client.post("/orgs", json={"name": "acme-bootstrap"})
+    assert created_org.status_code == 201
+    org_id = created_org.json()["id"]
+
+    first = await client.post(
+        f"/orgs/{org_id}/users",
+        json={
+            "email": "owner@acme.example.com",
+            "password": DEFAULT_USER_PASSWORD,
+            "name": "owner",
+            "role": "member",
+        },
+    )
+    assert first.status_code == 201
+    assert first.json()["role"] == "admin"
+
+    # Stale bearer must not block first-user bootstrap on a fresh org.
+    stale_org = await client.post("/orgs", json={"name": "acme-stale-token"})
+    assert stale_org.status_code == 201
+    stale_org_id = stale_org.json()["id"]
+    bootstrapped = await client.post(
+        f"/orgs/{stale_org_id}/users",
+        json={
+            "email": "owner@stale.example.com",
+            "password": DEFAULT_USER_PASSWORD,
+            "name": "owner",
+            "role": "member",
+        },
+        headers={"Authorization": "Bearer not-a-valid-jwt"},
+    )
+    assert bootstrapped.status_code == 201
+    assert bootstrapped.json()["role"] == "admin"
+
+    second = await client.post(
+        f"/orgs/{org_id}/users",
+        json={
+            "email": "member@acme.example.com",
+            "password": DEFAULT_USER_PASSWORD,
+            "name": "member",
+            "role": "member",
+        },
+    )
+    assert second.status_code == 401
+    assert "Authorization" in second.json()["detail"]
+
+    headers = await _auth_headers(client, "acme-bootstrap", "owner@acme.example.com")
+    member = await client.post(
+        f"/orgs/{org_id}/users",
+        json={
+            "email": "member@acme.example.com",
+            "password": DEFAULT_USER_PASSWORD,
+            "name": "member",
+            "role": "member",
+        },
+        headers=headers,
+    )
+    assert member.status_code == 201
+    assert member.json()["role"] == "member"
 
 
 @pytest.mark.asyncio
@@ -108,6 +201,10 @@ async def test_optimization_loop(test_env):
     assert created.status_code == 202
     job_id = created.json()["id"]
 
+    listed = await client.get("/jobs", headers=headers)
+    assert listed.status_code == 200
+    assert any(job["id"] == job_id for job in listed.json())
+
     async with factory() as session:
         await JobProcessor(session).process(job_id)
 
@@ -121,6 +218,15 @@ async def test_optimization_loop(test_env):
     assert body["iterations"][0]["tasks_completed"] == len(body["task_ids"])
     assert body["iterations"][0]["tasks_pending"] == 0
     assert body["iterations"][0]["tasks_running"] == 0
+    assert body["latest_task_results"]
+    assert {t["status"] for t in body["latest_task_results"]} <= {"passed", "failed", "infra_error"}
+    for task in body["latest_task_results"]:
+        if task["status"] == "failed":
+            assert task["failure_summary"]
+
+    queued_only = await client.get("/jobs", params={"status": "queued"}, headers=headers)
+    assert queued_only.status_code == 200
+    assert all(job["status"] == "queued" for job in queued_only.json())
 
 
 @pytest.mark.asyncio

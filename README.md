@@ -67,10 +67,12 @@ The test client logs in with the default credentials above — no env vars requi
 |----------|-------------|
 | `POST /auth/login` | Log in to an organization (returns access + refresh tokens) |
 | `POST /auth/refresh` | Refresh access token |
-| `GET /auth/me` | Current user profile |
-| `POST /orgs` | Create an organization |
-| `POST /orgs/{id}/users` | Create a user in an organization |
+| `POST /auth/logout` | Revoke a refresh token |
+| `GET /auth/me` | Current user profile (includes `org_name`) |
+| `POST /orgs` | Create an organization (public bootstrap) |
+| `POST /orgs/{id}/users` | Create a user (first user open; then org admin only) |
 | `POST /jobs` | Submit optimization job (returns 202) |
+| `GET /jobs` | List jobs (optional `?status=` filter) |
 | `GET /jobs/{id}` | Poll job status, latest results, iteration summaries |
 | `GET /jobs/{id}/iterations` | Full iteration history |
 | `GET /jobs/{id}/iterations/{n}` | Iteration detail with traces + LLM artifacts |

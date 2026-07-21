@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,9 +10,8 @@ from app.harness.template import DEFAULT_TASK_IDS
 from app.models.job import Job, JobStatus, StopReason
 from app.models.user import Role, User
 from app.schemas.agent_version import AgentVersionDetail, AgentVersionSummary
-from app.schemas.common import ErrorResponse
 from app.schemas.iteration import IterationDetail, IterationSummary
-from app.schemas.job import JobCreate, JobResponse
+from app.schemas.job import JobCreate, JobResponse, JobSummary
 from app.services.agent_versions import get_agent_version, list_agent_versions
 from app.services.jobs import (
     best_agent_version_no,
@@ -33,7 +32,6 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
     "",
     response_model=JobResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    responses={401: {"model": ErrorResponse}},
     summary="Submit a benchmark optimization job",
 )
 async def create_job(
@@ -50,7 +48,7 @@ async def create_job(
         max_iterations=body.max_iterations,
         patience=body.patience,
         executor=body.executor,
-        config=body.config,
+        config=body.config.model_dump(mode="python", exclude_none=True),
     )
     session.add(job)
     await session.commit()
@@ -58,12 +56,23 @@ async def create_job(
     return job_to_response(job)
 
 
-@router.get(
-    "/{job_id}",
-    response_model=JobResponse,
-    responses={404: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
-    summary="Get job status and latest results",
-)
+@router.get("", response_model=list[JobSummary], summary="List jobs visible to the current user")
+async def list_jobs(
+    status_filter: JobStatus | None = Query(default=None, alias="status"),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[JobSummary]:
+    stmt = select(Job).where(Job.org_id == user.org_id)
+    if user.role != Role.ADMIN:
+        stmt = stmt.where(Job.created_by == user.id)
+    if status_filter is not None:
+        stmt = stmt.where(Job.status == status_filter)
+    stmt = stmt.order_by(Job.created_at.desc())
+    result = await session.execute(stmt)
+    return [JobSummary.model_validate(job) for job in result.scalars().all()]
+
+
+@router.get("/{job_id}", response_model=JobResponse, summary="Get job status and latest results")
 async def get_job(
     job_id: str,
     session: AsyncSession = Depends(get_session),
@@ -85,7 +94,6 @@ async def get_job(
 @router.get(
     "/{job_id}/iterations",
     response_model=list[IterationSummary],
-    responses={404: {"model": ErrorResponse}},
     summary="List all iterations for a job",
 )
 async def list_iterations(
@@ -101,7 +109,6 @@ async def list_iterations(
 @router.get(
     "/{job_id}/iterations/{iteration_no}",
     response_model=IterationDetail,
-    responses={404: {"model": ErrorResponse}},
     summary="Get full detail for one iteration (traces, LLM artifacts)",
 )
 async def get_iteration_detail(
@@ -122,7 +129,6 @@ async def get_iteration_detail(
 @router.get(
     "/{job_id}/agent-versions",
     response_model=list[AgentVersionSummary],
-    responses={404: {"model": ErrorResponse}},
     summary="List all agent versions for a job",
 )
 async def list_job_agent_versions(
@@ -138,7 +144,6 @@ async def list_job_agent_versions(
 @router.get(
     "/{job_id}/agent-versions/{version_no}",
     response_model=AgentVersionDetail,
-    responses={404: {"model": ErrorResponse}},
     summary="Get one agent version (full agent.py + diff)",
 )
 async def get_job_agent_version(
@@ -154,12 +159,7 @@ async def get_job_agent_version(
     return AgentVersionDetail.model_validate(version)
 
 
-@router.post(
-    "/{job_id}/cancel",
-    response_model=JobResponse,
-    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
-    summary="Cancel a queued or running job",
-)
+@router.post("/{job_id}/cancel", response_model=JobResponse, summary="Cancel a queued or running job")
 async def cancel_job(
     job_id: str,
     session: AsyncSession = Depends(get_session),
@@ -180,6 +180,8 @@ async def _get_visible_job(session: AsyncSession, job_id: str, user: User) -> Jo
     result = await session.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
     if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.org_id != user.org_id:
         raise HTTPException(status_code=404, detail="Job not found")
     if user.role != Role.ADMIN and job.created_by != user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this job")
