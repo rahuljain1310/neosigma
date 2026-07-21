@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.db import get_session
 from app.harness.template import DEFAULT_TASK_IDS
-from app.models.job import Job, JobStatus
+from app.models.job import Job, JobStatus, StopReason
 from app.models.user import Role, User
 from app.schemas.agent_version import AgentVersionDetail, AgentVersionSummary
 from app.schemas.common import ErrorResponse
@@ -167,6 +169,8 @@ async def cancel_job(
     if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
         raise HTTPException(status_code=409, detail=f"Job already {job.status.value}")
     job.status = JobStatus.CANCELLED
+    job.stop_reason = StopReason.CANCELLED
+    job.finished_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(job)
     return job_to_response(job)

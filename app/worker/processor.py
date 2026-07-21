@@ -33,6 +33,15 @@ class JobProcessor:
         job = await self._load_job(job_id)
         if job is None:
             return
+        if job.status == JobStatus.CANCELLED:
+            if job.stop_reason is None:
+                job.stop_reason = StopReason.CANCELLED
+            if job.finished_at is None:
+                job.finished_at = datetime.now(timezone.utc)
+            await self.session.commit()
+            return
+        if job.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            return
 
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now(timezone.utc)
@@ -84,8 +93,10 @@ class JobProcessor:
         candidate_version_no: int | None = None
 
         for iteration_no in range(job.max_iterations + 1):
+            await self.session.refresh(job)
             if job.status == JobStatus.CANCELLED:
                 job.stop_reason = StopReason.CANCELLED
+                job.finished_at = datetime.now(timezone.utc)
                 return
 
             run_version_no = 0 if iteration_no == 0 else candidate_version_no
@@ -123,12 +134,29 @@ class JobProcessor:
                     row.tasks_completed = completed
                     await progress_session.commit()
 
+            async def should_cancel() -> bool:
+                factory = async_sessionmaker(self.session.bind, expire_on_commit=False, class_=AsyncSession)
+                async with factory() as status_session:
+                    result = await status_session.execute(select(Job.status).where(Job.id == job.id))
+                    return result.scalar_one_or_none() == JobStatus.CANCELLED
+
             result = await executor.run_benchmark(
                 job.task_ids,
                 version.content,
                 on_progress=on_progress,
+                should_cancel=should_cancel,
             )
+            await self.session.refresh(job)
             await self.session.refresh(iteration)
+            if job.status == JobStatus.CANCELLED:
+                iteration.phase = IterationPhase.FAILED
+                iteration.error = "Job cancelled during benchmark."
+                iteration.tasks_pending = 0
+                iteration.tasks_running = 0
+                job.stop_reason = StopReason.CANCELLED
+                job.finished_at = datetime.now(timezone.utc)
+                await self.session.commit()
+                return
             iteration.tasks_pending = 0
             iteration.tasks_running = 0
             iteration.tasks_completed = len(job.task_ids)
@@ -241,6 +269,15 @@ class JobProcessor:
                 source_agent_version_no=best_version_no,
                 recent_attempt=recent_attempt,
             )
+
+            await self.session.refresh(job)
+            if job.status == JobStatus.CANCELLED:
+                iteration.phase = IterationPhase.FAILED
+                iteration.error = "Job cancelled during optimizer proposal."
+                job.stop_reason = StopReason.CANCELLED
+                job.finished_at = datetime.now(timezone.utc)
+                await self.session.commit()
+                return
 
             iteration.llm_finished_at = datetime.now(timezone.utc)
             iteration.llm_prompt = proposal.prompt

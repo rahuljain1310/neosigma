@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
+import signal
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,38 @@ from client_debug import (
 )
 
 DEFAULT_BASE = os.environ.get("AOS_BASE_URL", "http://localhost:8000")
+_TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+
+
+@dataclass
+class JobCleanup:
+    base_url: str
+    job_id: str
+    headers: dict[str, str]
+    armed: bool = True
+
+    def disarm(self) -> None:
+        self.armed = False
+
+    def cancel(self) -> None:
+        """Best-effort cleanup used when the client exits before the job does."""
+        if not self.armed:
+            return
+        self.armed = False
+        try:
+            with httpx.Client(base_url=self.base_url, timeout=15.0) as client:
+                response = client.post(f"/jobs/{self.job_id}/cancel", headers=self.headers)
+                if response.status_code == 409:
+                    print(f"\nJob {self.job_id} already reached a terminal state.")
+                    return
+                response.raise_for_status()
+                print(f"\nCancelled job {self.job_id} because the client stopped tracking it.")
+        except Exception as exc:
+            print(f"\nWarning: could not cancel job {self.job_id}: {exc}")
+
+
+def _raise_keyboard_interrupt(_signum, _frame) -> None:
+    raise KeyboardInterrupt
 
 
 def login(client: httpx.Client, org_name: str, email: str, password: str) -> str:
@@ -151,6 +186,8 @@ def main() -> int:
         job = created.json()
         job_id = job["id"]
         print(f"Submitted job {job_id} (status={job['status']})")
+        cleanup = JobCleanup(args.base_url, job_id, headers)
+        atexit.register(cleanup.cancel)
 
         seen_benchmarks: dict[int, tuple[Any, ...]] = {}
         seen_proposals: dict[int, tuple[Any, ...]] = {}
@@ -230,7 +267,8 @@ def main() -> int:
                         )
                     seen_debug.add(iteration_no)
 
-            if status in {"completed", "failed", "cancelled"}:
+            if status in _TERMINAL_JOB_STATUSES:
+                cleanup.disarm()
                 break
             time.sleep(args.poll_interval)
 
@@ -275,5 +313,17 @@ def main() -> int:
     return 0
 
 
+def cli() -> int:
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    try:
+        return main()
+    except KeyboardInterrupt:
+        print("\nInterrupted; cancelling the active job before exit.")
+        return 130
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(cli())

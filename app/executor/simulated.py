@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from app.executor.base import BenchmarkResult, Executor, TaskExecution, TaskProgressCallback
+from app.executor.base import BenchmarkResult, CancellationCallback, Executor, TaskExecution, TaskProgressCallback
 
 
 class SimulatedExecutor(Executor):
@@ -24,6 +24,7 @@ class SimulatedExecutor(Executor):
         agent_content: str,
         *,
         on_progress: TaskProgressCallback | None = None,
+        should_cancel: CancellationCallback | None = None,
     ) -> BenchmarkResult:
         boosts = 0
         lower = agent_content.lower()
@@ -40,6 +41,8 @@ class SimulatedExecutor(Executor):
 
         task_results: list[TaskExecution] = []
         for i, task_id in enumerate(task_ids):
+            if should_cancel and await should_cancel():
+                break
             if on_progress:
                 await on_progress(total - i - 1, 1, i)
 

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.config import get_settings
-from app.executor.base import BenchmarkResult, Executor, TaskExecution, TaskProgressCallback
+from app.executor.base import (
+    BenchmarkResult,
+    CancellationCallback,
+    Executor,
+    TaskExecution,
+    TaskProgressCallback,
+)
 from app.harness.workspace import HarnessWorkspace, make_workspace
 
 logger = logging.getLogger(__name__)
@@ -39,6 +46,7 @@ class HarborExecutor(Executor):
         agent_content: str,
         *,
         on_progress: TaskProgressCallback | None = None,
+        should_cancel: CancellationCallback | None = None,
     ) -> BenchmarkResult:
         loop = asyncio.get_running_loop()
 
@@ -48,13 +56,26 @@ class HarborExecutor(Executor):
             fut = asyncio.run_coroutine_threadsafe(on_progress(pending, running, completed), loop)
             fut.result(timeout=30)
 
-        return await asyncio.to_thread(self._run_sync, task_ids, agent_content, sync_progress)
+        def sync_should_cancel() -> bool:
+            if should_cancel is None:
+                return False
+            fut = asyncio.run_coroutine_threadsafe(should_cancel(), loop)
+            return fut.result(timeout=30)
+
+        return await asyncio.to_thread(
+            self._run_sync,
+            task_ids,
+            agent_content,
+            sync_progress,
+            sync_should_cancel,
+        )
 
     def _run_sync(
         self,
         task_ids: list[str],
         agent_content: str,
         on_progress: Callable[[int, int, int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> BenchmarkResult:
         settings = get_settings()
         preflight_error = self._preflight(settings)
@@ -66,6 +87,8 @@ class HarborExecutor(Executor):
         self.workspace.ensure_repo()
         self.workspace.write_agent(agent_content)
         self._write_experiment_config(task_ids, settings)
+        if should_cancel and should_cancel():
+            return BenchmarkResult(executor_log="Benchmark cancelled before Harbor started.")
 
         env = os.environ.copy()
         env["PYTHONPATH"] = str(self.workspace.root) + os.pathsep + env.get("PYTHONPATH", "")
@@ -99,6 +122,7 @@ class HarborExecutor(Executor):
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
+                start_new_session=True,
             )
         except Exception as e:
             if on_progress:
@@ -108,6 +132,7 @@ class HarborExecutor(Executor):
         deadline = time.monotonic() + timeout_sec
         last_progress: tuple[int, int, int] | None = None
         timed_out = False
+        cancelled = False
         try:
             while True:
                 rc = proc.poll()
@@ -117,14 +142,18 @@ class HarborExecutor(Executor):
                     last_progress = progress
                 if rc is not None:
                     break
+                if should_cancel and should_cancel():
+                    cancelled = True
+                    _stop_process(proc)
+                    break
                 if time.monotonic() >= deadline:
                     timed_out = True
-                    proc.kill()
+                    _stop_process(proc)
                     break
                 time.sleep(_PROGRESS_POLL_SEC)
             stdout, stderr = proc.communicate(timeout=30)
         except Exception as e:
-            proc.kill()
+            _stop_process(proc)
             try:
                 stdout, stderr = proc.communicate(timeout=10)
             except Exception:
@@ -132,6 +161,10 @@ class HarborExecutor(Executor):
             if on_progress:
                 on_progress(0, 0, len(task_ids))
             return self._infra_failure(task_ids, f"Harbor subprocess failed: {e}")
+
+        if cancelled:
+            logger.info("[harbor job=%s] benchmark subprocess cancelled", self.job_id)
+            return BenchmarkResult(executor_log=_combine_logs(stdout, stderr) or "Benchmark cancelled.")
 
         if timed_out:
             if on_progress:
@@ -254,6 +287,24 @@ class HarborExecutor(Executor):
         if result_path.exists():
             verifier = json.loads(result_path.read_text())
         return trace, verifier
+
+
+def _stop_process(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        proc.kill()
 
 
 def _read_harbor_progress(jobs_root: Path, total: int) -> tuple[int, int, int] | None:

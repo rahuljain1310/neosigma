@@ -1,5 +1,3 @@
-import os
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -123,3 +121,33 @@ async def test_optimization_loop(test_env):
     assert body["iterations"][0]["tasks_completed"] == len(body["task_ids"])
     assert body["iterations"][0]["tasks_pending"] == 0
     assert body["iterations"][0]["tasks_running"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_job_marks_it_terminal_and_processor_does_not_revive_it(test_env):
+    client, factory, org_name, email = test_env
+    headers = await _auth_headers(client, org_name, email)
+    created = await client.post(
+        "/jobs",
+        json={
+            "task_ids": ["regex-log"],
+            "max_iterations": 1,
+            "patience": 1,
+            "executor": "simulated",
+        },
+        headers=headers,
+    )
+    job_id = created.json()["id"]
+
+    cancelled = await client.post(f"/jobs/{job_id}/cancel", headers=headers)
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert cancelled.json()["stop_reason"] == "cancelled"
+    assert cancelled.json()["finished_at"] is not None
+
+    async with factory() as session:
+        await JobProcessor(session).process(job_id)
+
+    detail = await client.get(f"/jobs/{job_id}", headers=headers)
+    assert detail.json()["status"] == "cancelled"
+    assert detail.json()["iterations"] == []

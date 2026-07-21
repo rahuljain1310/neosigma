@@ -6,6 +6,7 @@ from typing import Protocol
 
 # pending, running, completed
 TaskProgressCallback = Callable[[int, int, int], Awaitable[None]]
+CancellationCallback = Callable[[], Awaitable[bool]]
 
 
 @dataclass
@@ -36,4 +37,5 @@ class Executor(Protocol):
         agent_content: str,
         *,
         on_progress: TaskProgressCallback | None = None,
+        should_cancel: CancellationCallback | None = None,
     ) -> BenchmarkResult: ...
