@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,7 +18,7 @@ class Settings(BaseSettings):
 
     # Optimizer: "auto" uses the LLM when an API key is present, else the
     # deterministic heuristic optimizer (useful for offline evaluation).
-    optimizer_mode: str = "auto"  # auto | llm | heuristic
+    optimizer_mode: Literal["auto", "llm", "heuristic"] = "auto"
     optimizer_model: str = "gpt-5.4"
 
     # Model used by the agent under test (harbor executor).

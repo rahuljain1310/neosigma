@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from app.executor.base import BenchmarkResult, Executor, TaskExecution
+from app.executor.base import BenchmarkResult, Executor, TaskExecution, TaskProgressCallback
 
 
 class SimulatedExecutor(Executor):
@@ -18,7 +18,13 @@ class SimulatedExecutor(Executor):
     This gives the optimizer loop something real to optimize against offline.
     """
 
-    async def run_benchmark(self, task_ids: list[str], agent_content: str) -> BenchmarkResult:
+    async def run_benchmark(
+        self,
+        task_ids: list[str],
+        agent_content: str,
+        *,
+        on_progress: TaskProgressCallback | None = None,
+    ) -> BenchmarkResult:
         boosts = 0
         lower = agent_content.lower()
         if "todo" in lower or "plan" in lower:
@@ -28,8 +34,15 @@ class SimulatedExecutor(Executor):
         if "verify" in lower and "before finishing" in lower:
             boosts += 1
 
+        total = len(task_ids)
+        if on_progress:
+            await on_progress(total, 0, 0)
+
         task_results: list[TaskExecution] = []
         for i, task_id in enumerate(task_ids):
+            if on_progress:
+                await on_progress(total - i - 1, 1, i)
+
             base_pass = _stable_pass(task_id)
             effective_pass = base_pass or (i < boosts)
 
@@ -59,6 +72,9 @@ class SimulatedExecutor(Executor):
                     },
                 )
             )
+
+            if on_progress:
+                await on_progress(total - i - 1, 0, i + 1)
 
         val = sum(t.reward or 0.0 for t in task_results) / max(len(task_results), 1)
         log = json.dumps(

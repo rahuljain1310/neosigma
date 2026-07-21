@@ -25,6 +25,9 @@ class IterationSummary(BaseModel):
     phase: IterationPhase
     val_score: float | None
     accepted: bool | None
+    tasks_pending: int = 0
+    tasks_running: int = 0
+    tasks_completed: int = 0
     tasks_passed: int = 0
     tasks_failed: int = 0
     tasks_infra_error: int = 0

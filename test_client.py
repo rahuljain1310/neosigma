@@ -15,7 +15,6 @@ import httpx
 from app.auth import DEFAULT_ORG_NAME, DEFAULT_USER_EMAIL, DEFAULT_USER_PASSWORD
 from client_debug import (
     DEBUG_ARTIFACTS_DIR,
-    debug_completed_job,
     dump_iteration_debug,
     fetch_iteration_debug_bundle,
     print_iteration_debug,
@@ -52,6 +51,14 @@ def _proposal_snapshot(it: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _progress_snapshot(it: dict[str, Any]) -> tuple[int, int, int]:
+    return (
+        int(it.get("tasks_pending") or 0),
+        int(it.get("tasks_running") or 0),
+        int(it.get("tasks_completed") or 0),
+    )
+
+
 def _format_task_counts(it: dict[str, Any]) -> str:
     passed = it.get("tasks_passed", 0)
     failed = it.get("tasks_failed", 0)
@@ -60,29 +67,32 @@ def _format_task_counts(it: dict[str, Any]) -> str:
     return f"{passed}/{total} passed, {failed} failed, {infra} infra_error"
 
 
-def _print_iteration_update(it: dict[str, Any], *, best_val_score: float | None) -> None:
+def _format_progress(pending: int, running: int, completed: int) -> str:
+    total = pending + running + completed
+    return f"tasks: {pending} pending, {running} running, {completed} completed ({completed}/{total})"
+
+
+def _print_benchmark_progress(it: dict[str, Any], *, first: bool) -> None:
     iteration_no = it["iteration_no"]
-    phase = it.get("phase")
+    agent_v = it.get("agent_version_no")
+    pending, running, completed = _progress_snapshot(it)
+    progress = _format_progress(pending, running, completed)
+    if first:
+        print(f"  [iter {iteration_no}] running benchmark with agent_v={agent_v} | {progress}")
+    else:
+        print(f"  [iter {iteration_no}] {progress}")
+
+
+def _print_benchmark_done(it: dict[str, Any], *, best_val_score: float | None) -> None:
+    iteration_no = it["iteration_no"]
     agent_v = it.get("agent_version_no")
     val_score = it.get("val_score")
-
-    if phase in {"running_benchmark", "pending"}:
-        print(f"  [iter {iteration_no}] running benchmark with agent_v={agent_v} ...")
-        return
-
-    if val_score is not None and phase in {
-        "analyzing",
-        "proposing",
-        "done",
-        "failed",
-    }:
-        counts = _format_task_counts(it)
-        failed_ids = it.get("failed_task_ids") or []
-        failed_note = f" ({', '.join(failed_ids)})" if failed_ids else ""
-        print(
-            f"  [iter {iteration_no}] benchmark done: agent_v={agent_v} "
-            f"val_score={val_score:.3f} | {counts}{failed_note}"
-        )
+    counts = _format_task_counts(it)
+    failed_ids = it.get("failed_task_ids") or []
+    failed_note = f" ({', '.join(failed_ids)})" if failed_ids else ""
+    print(
+        f"  [iter {iteration_no}] benchmark done: agent_v={agent_v} val_score={val_score:.3f} | {counts}{failed_note}"
+    )
 
     if it.get("accepted") is True and iteration_no > 0:
         print(f"  [iter {iteration_no}] accepted — new best_val_score={best_val_score:.3f} (agent_v={agent_v})")
@@ -144,6 +154,8 @@ def main() -> int:
 
         seen_benchmarks: dict[int, tuple[Any, ...]] = {}
         seen_proposals: dict[int, tuple[Any, ...]] = {}
+        seen_progress: dict[int, tuple[int, int, int]] = {}
+        seen_running: set[int] = set()
         seen_debug: set[int] = set()
         last_status: str | None = None
         dump_dir = args.dump_dir
@@ -166,10 +178,21 @@ def main() -> int:
 
             for it in job.get("iterations", []):
                 iteration_no = it["iteration_no"]
+                phase = it.get("phase")
+
+                if phase in {"running_benchmark", "pending"}:
+                    progress = _progress_snapshot(it)
+                    first = iteration_no not in seen_running
+                    if first or seen_progress.get(iteration_no) != progress:
+                        _print_benchmark_progress(it, first=first)
+                        seen_running.add(iteration_no)
+                        seen_progress[iteration_no] = progress
+
                 bench_key = _benchmark_snapshot(it)
                 if it.get("val_score") is not None and seen_benchmarks.get(iteration_no) != bench_key:
-                    _print_iteration_update(it, best_val_score=best_val_score)
+                    _print_benchmark_done(it, best_val_score=best_val_score)
                     seen_benchmarks[iteration_no] = bench_key
+                    seen_progress[iteration_no] = _progress_snapshot(it)
 
                 proposal_key = _proposal_snapshot(it)
                 if (

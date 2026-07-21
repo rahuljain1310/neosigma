@@ -7,14 +7,18 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
 
 from app.config import get_settings
-from app.executor.base import BenchmarkResult, Executor, TaskExecution
+from app.executor.base import BenchmarkResult, Executor, TaskExecution, TaskProgressCallback
 from app.harness.workspace import HarnessWorkspace, make_workspace
 
 logger = logging.getLogger(__name__)
 
 _ENV_PROVIDER = "daytona"
+_PROGRESS_POLL_SEC = 2.0
 
 
 class HarborExecutor(Executor):
@@ -29,13 +33,34 @@ class HarborExecutor(Executor):
         self.config = config or {}
         self.workspace = make_workspace(job_id)
 
-    async def run_benchmark(self, task_ids: list[str], agent_content: str) -> BenchmarkResult:
-        return await asyncio.to_thread(self._run_sync, task_ids, agent_content)
+    async def run_benchmark(
+        self,
+        task_ids: list[str],
+        agent_content: str,
+        *,
+        on_progress: TaskProgressCallback | None = None,
+    ) -> BenchmarkResult:
+        loop = asyncio.get_running_loop()
 
-    def _run_sync(self, task_ids: list[str], agent_content: str) -> BenchmarkResult:
+        def sync_progress(pending: int, running: int, completed: int) -> None:
+            if on_progress is None:
+                return
+            fut = asyncio.run_coroutine_threadsafe(on_progress(pending, running, completed), loop)
+            fut.result(timeout=30)
+
+        return await asyncio.to_thread(self._run_sync, task_ids, agent_content, sync_progress)
+
+    def _run_sync(
+        self,
+        task_ids: list[str],
+        agent_content: str,
+        on_progress: Callable[[int, int, int], None] | None = None,
+    ) -> BenchmarkResult:
         settings = get_settings()
         preflight_error = self._preflight(settings)
         if preflight_error:
+            if on_progress:
+                on_progress(0, 0, len(task_ids))
             return self._infra_failure(task_ids, preflight_error)
 
         self.workspace.ensure_repo()
@@ -62,21 +87,63 @@ class HarborExecutor(Executor):
             str(self.config.get("per_task_timeout", settings.per_task_timeout_sec)),
         ]
 
+        if on_progress:
+            on_progress(len(task_ids), 0, 0)
+
+        jobs_root = self.workspace.root / "workspace" / "tbench_jobs"
+        timeout_sec = max(600, len(task_ids) * 300)
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=max(600, len(task_ids) * 300),
                 env=env,
             )
-        except subprocess.TimeoutExpired:
-            return self._infra_failure(task_ids, "Harbor subprocess timed out")
         except Exception as e:
+            if on_progress:
+                on_progress(0, 0, len(task_ids))
             return self._infra_failure(task_ids, f"Harbor subprocess failed to start: {e}")
 
-        log = _combine_logs(proc.stdout, proc.stderr)
-        payload, parse_error = _extract_payload(proc.stdout)
+        deadline = time.monotonic() + timeout_sec
+        last_progress: tuple[int, int, int] | None = None
+        timed_out = False
+        try:
+            while True:
+                rc = proc.poll()
+                progress = _read_harbor_progress(jobs_root, len(task_ids))
+                if progress is not None and progress != last_progress and on_progress:
+                    on_progress(*progress)
+                    last_progress = progress
+                if rc is not None:
+                    break
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    proc.kill()
+                    break
+                time.sleep(_PROGRESS_POLL_SEC)
+            stdout, stderr = proc.communicate(timeout=30)
+        except Exception as e:
+            proc.kill()
+            try:
+                stdout, stderr = proc.communicate(timeout=10)
+            except Exception:
+                stdout, stderr = "", ""
+            if on_progress:
+                on_progress(0, 0, len(task_ids))
+            return self._infra_failure(task_ids, f"Harbor subprocess failed: {e}")
+
+        if timed_out:
+            if on_progress:
+                on_progress(0, 0, len(task_ids))
+            return self._infra_failure(task_ids, "Harbor subprocess timed out")
+
+        if on_progress:
+            final = _read_harbor_progress(jobs_root, len(task_ids)) or (0, 0, len(task_ids))
+            on_progress(*final)
+
+        log = _combine_logs(stdout, stderr)
+        payload, parse_error = _extract_payload(stdout)
         if parse_error is not None:
             summary = f"Harbor runner did not return JSON results (exit={proc.returncode}). {parse_error}"
             logger.error("[harbor job=%s] %s\n%s", self.job_id, summary, log[-4000:])
@@ -187,6 +254,49 @@ class HarborExecutor(Executor):
         if result_path.exists():
             verifier = json.loads(result_path.read_text())
         return trace, verifier
+
+
+def _read_harbor_progress(jobs_root: Path, total: int) -> tuple[int, int, int] | None:
+    """Read live pending/running/completed counts from Harbor's job result.json."""
+    if not jobs_root.exists():
+        return None
+
+    newest: Path | None = None
+    newest_mtime = -1.0
+    for job_dir in jobs_root.iterdir():
+        if not job_dir.is_dir():
+            continue
+        result_path = job_dir / "result.json"
+        if not result_path.exists():
+            continue
+        try:
+            mtime = result_path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > newest_mtime:
+            newest_mtime = mtime
+            newest = result_path
+
+    if newest is None:
+        return None
+
+    try:
+        data = json.loads(newest.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    stats = data.get("stats") if isinstance(data, dict) else None
+    if not isinstance(stats, dict):
+        return None
+
+    completed = int(stats.get("n_completed_trials") or 0)
+    running = int(stats.get("n_running_trials") or 0)
+    pending = stats.get("n_pending_trials")
+    if pending is None:
+        pending = max(total - completed - running, 0)
+    else:
+        pending = int(pending)
+    return pending, running, completed
 
 
 def _exception_from_artifacts(

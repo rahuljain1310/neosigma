@@ -11,7 +11,12 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 # create_all does not ALTER existing tables. Keep small additive patches here
 # until we introduce Alembic migrations.
-_SCHEMA_PATCHES = ("ALTER TABLE iterations ADD COLUMN IF NOT EXISTS optimizer_context JSON",)
+_SCHEMA_PATCHES = (
+    "ALTER TABLE iterations ADD COLUMN IF NOT EXISTS optimizer_context JSON",
+    "ALTER TABLE iterations ADD COLUMN IF NOT EXISTS tasks_pending INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE iterations ADD COLUMN IF NOT EXISTS tasks_running INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE iterations ADD COLUMN IF NOT EXISTS tasks_completed INTEGER NOT NULL DEFAULT 0",
+)
 
 
 def get_engine():

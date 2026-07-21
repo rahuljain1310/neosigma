@@ -120,3 +120,6 @@ async def test_optimization_loop(test_env):
     assert body["best_val_score"] is not None
     assert len(body["iterations"]) >= 2
     assert body["iterations"][0]["tasks_passed"] + body["iterations"][0]["tasks_failed"] > 0
+    assert body["iterations"][0]["tasks_completed"] == len(body["task_ids"])
+    assert body["iterations"][0]["tasks_pending"] == 0
+    assert body["iterations"][0]["tasks_running"] == 0

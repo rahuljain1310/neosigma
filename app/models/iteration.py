@@ -50,6 +50,11 @@ class Iteration(IdTimestampMixin, Base):
     # None until judged; baseline iteration is always accepted.
     accepted: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # Live benchmark progress (updated while tasks execute).
+    tasks_pending: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tasks_running: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tasks_completed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     # Per-phase timestamps for observability of the async run.
     bench_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     bench_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

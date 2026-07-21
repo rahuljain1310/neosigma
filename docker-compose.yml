@@ -29,8 +29,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       OPTIMIZER_MODE: ${OPTIMIZER_MODE:-auto}
-      OPTIMIZER_MODEL: ${OPTIMIZER_MODEL:-gpt-5.4}
-      AGENT_MODEL: ${AGENT_MODEL:-gpt-5.4}
+      OPTIMIZER_MODEL: ${OPTIMIZER_MODEL:-gpt-5.5}
+      AGENT_MODEL: ${AGENT_MODEL:-gpt-5.3}
     ports:
       - "8000:8000"
     volumes:

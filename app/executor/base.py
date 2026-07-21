@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
+
+# pending, running, completed
+TaskProgressCallback = Callable[[int, int, int], Awaitable[None]]
 
 
 @dataclass
@@ -26,4 +30,10 @@ class BenchmarkResult:
 
 
 class Executor(Protocol):
-    async def run_benchmark(self, task_ids: list[str], agent_content: str) -> BenchmarkResult: ...
+    async def run_benchmark(
+        self,
+        task_ids: list[str],
+        agent_content: str,
+        *,
+        on_progress: TaskProgressCallback | None = None,
+    ) -> BenchmarkResult: ...
