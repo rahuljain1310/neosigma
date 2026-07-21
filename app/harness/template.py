@@ -184,11 +184,11 @@ class HarnessAgent(BaseAgent):
 # Representative fast Terminal-Bench subset for local/dev runs.
 DEFAULT_TASK_IDS = [
     "regex-log",
-    "filter-js-from-html",
     "extract-elf",
     "log-summary-date-ranges",
     "gcode-to-text",
     ## Slower (tmp - hide)
+    # "filter-js-from-html",
     # "break-filter-js-from-html",
     # "fix-git",
     # "git-leak-recovery",
