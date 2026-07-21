@@ -30,7 +30,7 @@ services:
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       OPTIMIZER_MODE: ${OPTIMIZER_MODE:-auto}
       OPTIMIZER_MODEL: ${OPTIMIZER_MODEL:-gpt-5.5}
-      AGENT_MODEL: ${AGENT_MODEL:-gpt-5.3}
+      AGENT_MODEL: ${AGENT_MODEL:-gpt-5.4}
     ports:
       - "8000:8000"
     volumes:
