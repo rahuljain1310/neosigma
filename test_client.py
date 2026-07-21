@@ -12,13 +12,30 @@ from typing import Any
 
 import httpx
 
+from app.auth import DEFAULT_ORG_NAME, DEFAULT_USER_EMAIL, DEFAULT_USER_PASSWORD
+
 DEFAULT_BASE = os.environ.get("AOS_BASE_URL", "http://localhost:8000")
+
+
+def login(client: httpx.Client, org_name: str, email: str, password: str) -> str:
+    resp = client.post(
+        "/auth/login",
+        json={"org_name": org_name, "email": email, "password": password},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["access_token"]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Agent Optimization Service test client")
     parser.add_argument("--base-url", default=DEFAULT_BASE)
-    parser.add_argument("--api-key", default=os.environ.get("AOS_API_KEY", ""))
+    parser.add_argument("--org", default=os.environ.get("AOS_ORG", DEFAULT_ORG_NAME))
+    parser.add_argument("--email", default=os.environ.get("AOS_EMAIL", DEFAULT_USER_EMAIL))
+    parser.add_argument(
+        "--password",
+        default=os.environ.get("AOS_PASSWORD", DEFAULT_USER_PASSWORD),
+    )
     parser.add_argument("--executor", choices=["simulated", "harbor"], default="simulated")
     parser.add_argument("--max-iterations", type=int, default=3)
     parser.add_argument("--patience", type=int, default=2)
@@ -26,15 +43,14 @@ def main() -> int:
     parser.add_argument("--task-ids", nargs="*", default=None)
     args = parser.parse_args()
 
-    if not args.api_key:
-        print("Set AOS_API_KEY or pass --api-key", file=sys.stderr)
-        return 1
-
-    headers = {"Authorization": f"Bearer {args.api_key}"}
-    with httpx.Client(base_url=args.base_url, headers=headers, timeout=60.0) as client:
+    with httpx.Client(base_url=args.base_url, timeout=60.0) as client:
         health = client.get("/health")
         health.raise_for_status()
         print("Health:", health.json())
+
+        access_token = login(client, args.org, args.email, args.password)
+        headers = {"Authorization": f"Bearer {access_token}"}
+        print(f"Logged in as {args.email} @ {args.org}")
 
         payload: dict[str, Any] = {
             "max_iterations": args.max_iterations,
@@ -45,14 +61,14 @@ def main() -> int:
         if args.task_ids:
             payload["task_ids"] = args.task_ids
 
-        created = client.post("/jobs", json=payload)
+        created = client.post("/jobs", json=payload, headers=headers)
         created.raise_for_status()
         job = created.json()
         job_id = job["id"]
         print(f"Submitted job {job_id} (status={job['status']})")
 
         while True:
-            resp = client.get(f"/jobs/{job_id}")
+            resp = client.get(f"/jobs/{job_id}", headers=headers)
             resp.raise_for_status()
             job = resp.json()
             status = job["status"]
@@ -79,7 +95,7 @@ def main() -> int:
         for tr in job.get("latest_task_results", []):
             print(f"  {tr['task_id']}: {tr['status']} reward={tr.get('reward')}")
 
-        iterations_resp = client.get(f"/jobs/{job_id}/iterations")
+        iterations_resp = client.get(f"/jobs/{job_id}/iterations", headers=headers)
         iterations_resp.raise_for_status()
         iterations = iterations_resp.json()
         print(f"\n=== Iteration history ({len(iterations)} iterations) ===")
@@ -95,7 +111,7 @@ def main() -> int:
                 print(f"       rationale: {it['improvement_rationale'][:120]}")
 
         if iterations:
-            detail = client.get(f"/jobs/{job_id}/iterations/0")
+            detail = client.get(f"/jobs/{job_id}/iterations/0", headers=headers)
             detail.raise_for_status()
             d = detail.json()
             print(f"\n=== Iteration 0 detail: {len(d.get('task_results', []))} task results ===")

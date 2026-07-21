@@ -3,6 +3,7 @@ import logging
 
 from fastapi import FastAPI
 
+from app.api.auth import router as auth_router
 from app.api.jobs import router as jobs_router
 from app.api.orgs import router as orgs_router
 from app.config import get_settings
@@ -22,12 +23,7 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     async with session_factory()() as session:
-        api_key = await ensure_seed_data(session)
-        if api_key:
-            logger.warning(
-                "Created default admin API key (store it now): %s",
-                api_key,
-            )
+        await ensure_seed_data(session)
 
     settings = get_settings()
     if settings.worker_enabled:
@@ -51,6 +47,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth_router)
 app.include_router(jobs_router)
 app.include_router(orgs_router)
 

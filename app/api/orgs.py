@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import generate_api_key, hash_api_key, require_admin
+from app.auth import hash_password
 from app.db import get_session
-from app.models.member import Member
 from app.models.organization import Organization
-from app.schemas.auth import ApiKeyCreated, MemberCreate, MemberResponse
+from app.models.user import User
+from app.schemas.auth import UserCreate, UserResponse
 from app.schemas.common import ErrorResponse
 from app.schemas.organization import OrganizationCreate, OrganizationResponse
 
@@ -23,7 +23,6 @@ router = APIRouter(prefix="/orgs", tags=["organizations"])
 async def create_org(
     body: OrganizationCreate,
     session: AsyncSession = Depends(get_session),
-    _admin: Member = Depends(require_admin),
 ) -> Organization:
     existing = await session.execute(select(Organization).where(Organization.name == body.name))
     if existing.scalar_one_or_none():
@@ -36,31 +35,35 @@ async def create_org(
 
 
 @router.post(
-    "/{org_id}/members",
-    response_model=ApiKeyCreated,
+    "/{org_id}/users",
+    response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    responses={404: {"model": ErrorResponse}},
-    summary="Create a member and issue an API key",
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    summary="Create a user in an organization",
 )
-async def create_member(
+async def create_user(
     org_id: str,
-    body: MemberCreate,
+    body: UserCreate,
     session: AsyncSession = Depends(get_session),
-    _admin: Member = Depends(require_admin),
-) -> ApiKeyCreated:
+) -> User:
     org = await session.get(Organization, org_id)
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    api_key = generate_api_key()
-    member = Member(
+    existing = await session.execute(
+        select(User).where(User.org_id == org_id, User.email == body.email)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="User already exists in this organization")
+
+    user = User(
         org_id=org_id,
+        email=body.email,
         name=body.name,
         role=body.role,
-        api_key_hash=hash_api_key(api_key),
-        api_key_prefix=api_key[:12],
+        password_hash=hash_password(body.password),
     )
-    session.add(member)
+    session.add(user)
     await session.commit()
-    await session.refresh(member)
-    return ApiKeyCreated(**MemberResponse.model_validate(member).model_dump(), api_key=api_key)
+    await session.refresh(user)
+    return user

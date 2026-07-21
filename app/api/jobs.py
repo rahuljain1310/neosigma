@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_member
+from app.auth import get_current_user
 from app.db import get_session
 from app.harness.template import DEFAULT_TASK_IDS
 from app.models.job import Job, JobStatus
-from app.models.member import Member, Role
+from app.models.user import Role, User
 from app.schemas.common import ErrorResponse
 from app.schemas.iteration import IterationDetail, IterationSummary
 from app.schemas.job import JobCreate, JobResponse
@@ -33,12 +33,12 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 async def create_job(
     body: JobCreate,
     session: AsyncSession = Depends(get_session),
-    member: Member = Depends(get_current_member),
+    user: User = Depends(get_current_user),
 ) -> JobResponse:
     task_ids = body.task_ids or DEFAULT_TASK_IDS
     job = Job(
-        org_id=member.org_id,
-        created_by=member.id,
+        org_id=user.org_id,
+        created_by=user.id,
         status=JobStatus.QUEUED,
         task_ids=task_ids,
         max_iterations=body.max_iterations,
@@ -61,9 +61,9 @@ async def create_job(
 async def get_job(
     job_id: str,
     session: AsyncSession = Depends(get_session),
-    member: Member = Depends(get_current_member),
+    user: User = Depends(get_current_user),
 ) -> JobResponse:
-    job = await _get_visible_job(session, job_id, member)
+    job = await _get_visible_job(session, job_id, user)
     iterations = await get_iterations(session, job_id)
     latest_results = await get_latest_task_results(session, job_id)
     version_no = await best_agent_version_no(session, job)
@@ -84,9 +84,9 @@ async def get_job(
 async def list_iterations(
     job_id: str,
     session: AsyncSession = Depends(get_session),
-    member: Member = Depends(get_current_member),
+    user: User = Depends(get_current_user),
 ) -> list[IterationSummary]:
-    await _get_visible_job(session, job_id, member)
+    await _get_visible_job(session, job_id, user)
     iterations = await get_iterations(session, job_id)
     return [IterationSummary.model_validate(i) for i in iterations]
 
@@ -101,9 +101,9 @@ async def get_iteration_detail(
     job_id: str,
     iteration_no: int,
     session: AsyncSession = Depends(get_session),
-    member: Member = Depends(get_current_member),
+    user: User = Depends(get_current_user),
 ) -> IterationDetail:
-    await _get_visible_job(session, job_id, member)
+    await _get_visible_job(session, job_id, user)
     iteration = await get_iteration(session, job_id, iteration_no)
     if iteration is None:
         raise HTTPException(status_code=404, detail="Iteration not found")
@@ -120,9 +120,9 @@ async def get_iteration_detail(
 async def cancel_job(
     job_id: str,
     session: AsyncSession = Depends(get_session),
-    member: Member = Depends(get_current_member),
+    user: User = Depends(get_current_user),
 ) -> JobResponse:
-    job = await _get_visible_job(session, job_id, member)
+    job = await _get_visible_job(session, job_id, user)
     if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
         raise HTTPException(status_code=409, detail=f"Job already {job.status.value}")
     job.status = JobStatus.CANCELLED
@@ -131,11 +131,11 @@ async def cancel_job(
     return job_to_response(job)
 
 
-async def _get_visible_job(session: AsyncSession, job_id: str, member: Member) -> Job:
+async def _get_visible_job(session: AsyncSession, job_id: str, user: User) -> Job:
     result = await session.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    if member.role != Role.ADMIN and job.created_by != member.id:
+    if user.role != Role.ADMIN and job.created_by != user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this job")
     return job

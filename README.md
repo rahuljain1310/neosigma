@@ -36,17 +36,24 @@ cp .env.example .env
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-On first startup the service seeds a default org and prints an admin API key to the logs. Store it:
+On first startup the service seeds a default org and admin user:
 
-```bash
-export AOS_API_KEY=aos_...
-```
+| Field | Value |
+|-------|-------|
+| Organization | `default` |
+| Email | `admin@example.com` |
+| Password | `assignment-password` |
+
+Log in via `POST /auth/login`, then use the returned `access_token` as `Authorization: Bearer <token>`.
 
 ### 4. Run the test client (simulated executor — no sandbox cost)
 
 ```bash
-uv run python test_client.py --executor simulated --max-iterations 3 --patience 2
+make client
+# or: uv run python test_client.py
 ```
+
+The test client logs in with the default credentials above — no env vars required.
 
 ### 5. OpenAPI spec
 
@@ -58,15 +65,18 @@ uv run python test_client.py --executor simulated --max-iterations 3 --patience 
 
 | Endpoint | Description |
 |----------|-------------|
+| `POST /auth/login` | Log in to an organization (returns access + refresh tokens) |
+| `POST /auth/refresh` | Refresh access token |
+| `GET /auth/me` | Current user profile |
+| `POST /orgs` | Create an organization |
+| `POST /orgs/{id}/users` | Create a user in an organization |
 | `POST /jobs` | Submit optimization job (returns 202) |
 | `GET /jobs/{id}` | Poll job status, latest results, iteration summaries |
 | `GET /jobs/{id}/iterations` | Full iteration history |
 | `GET /jobs/{id}/iterations/{n}` | Iteration detail with traces + LLM artifacts |
 | `POST /jobs/{id}/cancel` | Cancel a queued/running job |
-| `POST /orgs` | Create org (admin only) |
-| `POST /orgs/{id}/members` | Issue API key (admin only) |
 
-Auth: `Authorization: Bearer <api_key>`. Members see only their own jobs; admins see all org jobs.
+Auth: log in with `POST /auth/login`, then send `Authorization: Bearer <access_token>`. Members see only their own jobs; admins see all org jobs.
 
 ## Executors
 

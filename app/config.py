@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://agentopt:agentopt@localhost:5433/agentopt"
 
+    # JWT auth
+    jwt_secret: str = "dev-secret-change-in-production-32b-min"
+    access_token_expire_minutes: int = 60
+    refresh_token_expire_days: int = 30
+
     # Optimizer: "auto" uses the LLM when an API key is present, else the
     # deterministic heuristic optimizer (useful for offline evaluation).
     optimizer_mode: str = "auto"  # auto | llm | heuristic

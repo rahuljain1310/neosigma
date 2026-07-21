@@ -31,7 +31,7 @@ class Job(IdTimestampMixin, Base):
     org_id: Mapped[str] = mapped_column(
         ForeignKey("organizations.id"), nullable=False, index=True
     )
-    created_by: Mapped[str] = mapped_column(ForeignKey("members.id"), nullable=False)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
 
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, values_callable=lambda e: [m.value for m in e]),

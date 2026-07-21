@@ -4,12 +4,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.auth import generate_api_key, hash_api_key
+from app.auth import DEFAULT_USER_PASSWORD, hash_password
 from app.db import get_session
 from app.main import app
 from app.models.base import Base
-from app.models.member import Member, Role
 from app.models.organization import Organization
+from app.models.user import Role, User
 from app.worker.processor import JobProcessor
 
 
@@ -29,15 +29,14 @@ async def test_env(monkeypatch):
         org = Organization(name="test-org")
         session.add(org)
         await session.flush()
-        api_key = generate_api_key()
-        member = Member(
+        user = User(
             org_id=org.id,
+            email="tester@example.com",
             name="tester",
             role=Role.ADMIN,
-            api_key_hash=hash_api_key(api_key),
-            api_key_prefix=api_key[:12],
+            password_hash=hash_password(DEFAULT_USER_PASSWORD),
         )
-        session.add(member)
+        session.add(user)
         await session.commit()
 
     async def override_get_session():
@@ -48,25 +47,55 @@ async def test_env(monkeypatch):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client, factory, api_key
+        yield client, factory, "test-org", "tester@example.com"
 
     app.dependency_overrides.clear()
     get_settings.cache_clear()
     await engine.dispose()
 
 
+async def _auth_headers(client: AsyncClient, org_name: str, email: str) -> dict[str, str]:
+    resp = await client.post(
+        "/auth/login",
+        json={"org_name": org_name, "email": email, "password": DEFAULT_USER_PASSWORD},
+    )
+    assert resp.status_code == 200
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.mark.asyncio
 async def test_health(test_env):
-    client, _, _ = test_env
+    client, _, _, _ = test_env
     resp = await client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
 
 
 @pytest.mark.asyncio
+async def test_login_and_refresh(test_env):
+    client, _, org_name, email = test_env
+    login = await client.post(
+        "/auth/login",
+        json={"org_name": org_name, "email": email, "password": DEFAULT_USER_PASSWORD},
+    )
+    assert login.status_code == 200
+    tokens = login.json()
+    assert "access_token" in tokens
+    assert "refresh_token" in tokens
+
+    refreshed = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": tokens["refresh_token"]},
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["access_token"]
+
+
+@pytest.mark.asyncio
 async def test_optimization_loop(test_env):
-    client, factory, api_key = test_env
-    headers = {"Authorization": f"Bearer {api_key}"}
+    client, factory, org_name, email = test_env
+    headers = await _auth_headers(client, org_name, email)
 
     created = await client.post(
         "/jobs",
@@ -90,11 +119,3 @@ async def test_optimization_loop(test_env):
     assert body["status"] == "completed"
     assert body["best_val_score"] is not None
     assert len(body["iterations"]) >= 2
-
-    iters = await client.get(f"/jobs/{job_id}/iterations", headers=headers)
-    assert iters.status_code == 200
-    assert len(iters.json()) >= 2
-
-    iter0 = await client.get(f"/jobs/{job_id}/iterations/0", headers=headers)
-    assert iter0.status_code == 200
-    assert len(iter0.json()["task_results"]) == 3

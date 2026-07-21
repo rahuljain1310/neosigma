@@ -22,6 +22,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://agentopt:agentopt@db:5432/agentopt
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       E2B_API_KEY: ${E2B_API_KEY:-}
     ports:
