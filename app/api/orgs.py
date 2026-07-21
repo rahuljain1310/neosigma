@@ -48,9 +48,7 @@ async def create_user(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    count_result = await session.execute(
-        select(func.count()).select_from(User).where(User.org_id == org_id)
-    )
+    count_result = await session.execute(select(func.count()).select_from(User).where(User.org_id == org_id))
     user_count = int(count_result.scalar_one())
 
     if user_count == 0:

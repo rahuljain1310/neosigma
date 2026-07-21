@@ -442,7 +442,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/AgentVersionSummary"
+                    "$ref": "#/components/schemas/AgentVersionDetail"
                   },
                   "title": "Response List Job Agent Versions Jobs  Job Id  Agent Versions Get"
                 }
@@ -747,60 +747,6 @@
         ],
         "title": "AgentVersionDetail"
       },
-      "AgentVersionSummary": {
-        "properties": {
-          "version_no": {
-            "type": "integer",
-            "title": "Version No"
-          },
-          "parent_version_no": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Version No"
-          },
-          "sha256": {
-            "type": "string",
-            "title": "Sha256"
-          },
-          "created_by_iteration": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By Iteration",
-            "description": "Iteration whose optimizer produced this version (None for v0)."
-          },
-          "diff": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Diff",
-            "description": "Unified diff against parent version."
-          }
-        },
-        "type": "object",
-        "required": [
-          "version_no",
-          "parent_version_no",
-          "sha256"
-        ],
-        "title": "AgentVersionSummary"
-      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -871,42 +817,8 @@
             ],
             "title": "Accepted"
           },
-          "tasks_pending": {
-            "type": "integer",
-            "title": "Tasks Pending",
-            "default": 0
-          },
-          "tasks_running": {
-            "type": "integer",
-            "title": "Tasks Running",
-            "default": 0
-          },
-          "tasks_completed": {
-            "type": "integer",
-            "title": "Tasks Completed",
-            "default": 0
-          },
-          "tasks_passed": {
-            "type": "integer",
-            "title": "Tasks Passed",
-            "default": 0
-          },
-          "tasks_failed": {
-            "type": "integer",
-            "title": "Tasks Failed",
-            "default": 0
-          },
-          "tasks_infra_error": {
-            "type": "integer",
-            "title": "Tasks Infra Error",
-            "default": 0
-          },
-          "failed_task_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Failed Task Ids"
+          "tasks_summary": {
+            "$ref": "#/components/schemas/TasksSummary"
           },
           "proposed_agent_version_no": {
             "anyOf": [
@@ -944,7 +856,7 @@
             ],
             "title": "Bench Finished At"
           },
-          "llm_started_at": {
+          "optimizer_started_at": {
             "anyOf": [
               {
                 "type": "string",
@@ -954,9 +866,9 @@
                 "type": "null"
               }
             ],
-            "title": "Llm Started At"
+            "title": "Optimizer Started At"
           },
-          "llm_finished_at": {
+          "optimizer_finished_at": {
             "anyOf": [
               {
                 "type": "string",
@@ -966,7 +878,7 @@
                 "type": "null"
               }
             ],
-            "title": "Llm Finished At"
+            "title": "Optimizer Finished At"
           },
           "improvement_rationale": {
             "anyOf": [
@@ -1074,8 +986,8 @@
           "accepted",
           "bench_started_at",
           "bench_finished_at",
-          "llm_started_at",
-          "llm_finished_at",
+          "optimizer_started_at",
+          "optimizer_finished_at",
           "improvement_rationale",
           "learnings",
           "error",
@@ -1134,42 +1046,8 @@
             ],
             "title": "Accepted"
           },
-          "tasks_pending": {
-            "type": "integer",
-            "title": "Tasks Pending",
-            "default": 0
-          },
-          "tasks_running": {
-            "type": "integer",
-            "title": "Tasks Running",
-            "default": 0
-          },
-          "tasks_completed": {
-            "type": "integer",
-            "title": "Tasks Completed",
-            "default": 0
-          },
-          "tasks_passed": {
-            "type": "integer",
-            "title": "Tasks Passed",
-            "default": 0
-          },
-          "tasks_failed": {
-            "type": "integer",
-            "title": "Tasks Failed",
-            "default": 0
-          },
-          "tasks_infra_error": {
-            "type": "integer",
-            "title": "Tasks Infra Error",
-            "default": 0
-          },
-          "failed_task_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Failed Task Ids"
+          "tasks_summary": {
+            "$ref": "#/components/schemas/TasksSummary"
           },
           "proposed_agent_version_no": {
             "anyOf": [
@@ -1207,7 +1085,7 @@
             ],
             "title": "Bench Finished At"
           },
-          "llm_started_at": {
+          "optimizer_started_at": {
             "anyOf": [
               {
                 "type": "string",
@@ -1217,9 +1095,9 @@
                 "type": "null"
               }
             ],
-            "title": "Llm Started At"
+            "title": "Optimizer Started At"
           },
-          "llm_finished_at": {
+          "optimizer_finished_at": {
             "anyOf": [
               {
                 "type": "string",
@@ -1229,7 +1107,7 @@
                 "type": "null"
               }
             ],
-            "title": "Llm Finished At"
+            "title": "Optimizer Finished At"
           },
           "improvement_rationale": {
             "anyOf": [
@@ -1280,8 +1158,8 @@
           "accepted",
           "bench_started_at",
           "bench_finished_at",
-          "llm_started_at",
-          "llm_finished_at",
+          "optimizer_started_at",
+          "optimizer_finished_at",
           "improvement_rationale",
           "learnings",
           "error",
@@ -1794,39 +1672,6 @@
             ],
             "title": "Source Agent Version No"
           },
-          "failing_task_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failing Task Count"
-          },
-          "passed_task_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passed Task Count"
-          },
-          "infra_error_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Infra Error Count"
-          },
           "failure_context": {
             "anyOf": [
               {
@@ -1995,7 +1840,7 @@
             ],
             "title": "Status"
           },
-          "failure_summary": {
+          "summary": {
             "anyOf": [
               {
                 "type": "string"
@@ -2004,7 +1849,7 @@
                 "type": "null"
               }
             ],
-            "title": "Failure Summary"
+            "title": "Summary"
           },
           "reward": {
             "anyOf": [
@@ -2202,49 +2047,13 @@
           {
             "reward": 1.0,
             "status": "passed",
-            "task_id": "regex-log",
-            "trace": [
-              {
-                "content": "Task: regex-log",
-                "role": "user"
-              },
-              {
-                "content": "Explored environment and attempted solution.",
-                "role": "assistant"
-              }
-            ],
-            "verifier_result": {
-              "task_name": "regex-log",
-              "verifier_result": {
-                "rewards": {
-                  "reward": 1.0
-                }
-              }
-            }
+            "task_id": "regex-log"
           },
           {
             "failure_summary": "Simulated failure on cobol-modernization: agent did not explore environment or verify solution.",
             "reward": 0.0,
             "status": "failed",
-            "task_id": "cobol-modernization",
-            "trace": [
-              {
-                "content": "Task: cobol-modernization",
-                "role": "user"
-              },
-              {
-                "content": "Gave up early without verifying.",
-                "role": "assistant"
-              }
-            ],
-            "verifier_result": {
-              "task_name": "cobol-modernization",
-              "verifier_result": {
-                "rewards": {
-                  "reward": 0.0
-                }
-              }
-            }
+            "task_id": "cobol-modernization"
           }
         ]
       },
@@ -2256,6 +2065,55 @@
           "infra_error"
         ],
         "title": "TaskStatus"
+      },
+      "TasksSummary": {
+        "properties": {
+          "pending": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pending"
+          },
+          "running": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Running"
+          },
+          "completed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Completed"
+          },
+          "passed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Passed"
+          },
+          "failed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed"
+          },
+          "infra_error": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Infra Error"
+          }
+        },
+        "type": "object",
+        "title": "TasksSummary",
+        "description": "Per-iteration task membership by status (IDs, not counts).\n\nDuring a live benchmark, ``completed`` is ``all_task_ids - pending - running``\n(finished, not yet classified). After results land, ``passed`` / ``failed`` /\n``infra_error`` are filled and ``completed`` is their union."
       },
       "TokenResponse": {
         "properties": {

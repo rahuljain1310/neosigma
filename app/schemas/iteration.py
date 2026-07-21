@@ -53,7 +53,7 @@ class OptimizerTaskSnippet(BaseModel):
 
     task_id: str | None = None
     status: str | None = None
-    failure_summary: str | None = None
+    summary: str | None = None
     reward: float | None = None
     trace: Any | None = None
     verifier: Any | None = None
@@ -65,9 +65,6 @@ class OptimizerContext(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     source_agent_version_no: int | None = None
-    failing_task_count: int | None = None
-    passed_task_count: int | None = None
-    infra_error_count: int | None = None
     failure_context: list[OptimizerTaskSnippet] | list[dict[str, Any]] | None = None
     success_context: list[OptimizerTaskSnippet] | list[dict[str, Any]] | None = None
     infra_context: list[OptimizerTaskSnippet] | list[dict[str, Any]] | None = None
@@ -108,14 +105,6 @@ class TaskResultOut(BaseModel):
                     "reward": 1.0,
                     "status": "passed",
                     "failure_summary": None,
-                    "trace": [
-                        {"role": "user", "content": "Task: regex-log"},
-                        {"role": "assistant", "content": "Explored environment and attempted solution."},
-                    ],
-                    "verifier_result": {
-                        "task_name": "regex-log",
-                        "verifier_result": {"rewards": {"reward": 1.0}},
-                    },
                 },
                 {
                     "task_id": "cobol-modernization",
@@ -125,18 +114,26 @@ class TaskResultOut(BaseModel):
                         "Simulated failure on cobol-modernization: agent did not explore "
                         "environment or verify solution."
                     ),
-                    "trace": [
-                        {"role": "user", "content": "Task: cobol-modernization"},
-                        {"role": "assistant", "content": "Gave up early without verifying."},
-                    ],
-                    "verifier_result": {
-                        "task_name": "cobol-modernization",
-                        "verifier_result": {"rewards": {"reward": 0.0}},
-                    },
                 },
             ]
         },
     }
+
+
+class TasksSummary(BaseModel):
+    """Per-iteration task membership by status (IDs, not counts).
+
+    During a live benchmark, ``completed`` is ``all_task_ids - pending - running``
+    (finished, not yet classified). After results land, ``passed`` / ``failed`` /
+    ``infra_error`` are filled and ``completed`` is their union.
+    """
+
+    pending: list[str] = Field(default_factory=list)
+    running: list[str] = Field(default_factory=list)
+    completed: list[str] = Field(default_factory=list)
+    passed: list[str] = Field(default_factory=list)
+    failed: list[str] = Field(default_factory=list)
+    infra_error: list[str] = Field(default_factory=list)
 
 
 class IterationSummary(BaseModel):
@@ -146,21 +143,15 @@ class IterationSummary(BaseModel):
     phase: IterationPhase
     val_score: float | None
     accepted: bool | None
-    tasks_pending: int = 0
-    tasks_running: int = 0
-    tasks_completed: int = 0
-    tasks_passed: int = 0
-    tasks_failed: int = 0
-    tasks_infra_error: int = 0
-    failed_task_ids: list[str] = Field(default_factory=list)
+    tasks_summary: TasksSummary = Field(default_factory=TasksSummary)
     proposed_agent_version_no: int | None = Field(
         default=None,
         description="Agent version created by this iteration's optimizer proposal.",
     )
     bench_started_at: datetime | None
     bench_finished_at: datetime | None
-    llm_started_at: datetime | None
-    llm_finished_at: datetime | None
+    optimizer_started_at: datetime | None
+    optimizer_finished_at: datetime | None
     improvement_rationale: str | None
     learnings: str | None
     error: str | None

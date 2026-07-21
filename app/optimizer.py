@@ -352,7 +352,7 @@ def build_task_context(
             "reward": task.reward,
         }
         if task.failure_summary:
-            entry["failure_summary"] = task.failure_summary
+            entry["summary"] = task.failure_summary
         verifier = summarize_verifier(task.verifier_result)
         if verifier:
             entry["verifier"] = verifier

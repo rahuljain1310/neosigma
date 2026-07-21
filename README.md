@@ -14,11 +14,113 @@ POST /jobs → worker claims job → for each iteration:
 
 **Sandbox boundary:** The API/worker never executes agent code. `TerminalBenchRunner` shells out to `harbor run`, which provisions one Daytona sandbox per task. The agent LLM loop runs in the Harbor process; only bash commands enter the sandbox.
 
+## Asynchronous processing
+
+Submitting a run does not block on benchmark execution. `POST /jobs` creates a
+`queued` job in Postgres and immediately returns `202 Accepted` with the job ID.
+The client uses that ID to poll `GET /jobs/{id}` for status and results.
+
+```
+Client ── submit ──> API ── queued job ──> Postgres
+Client <── status/results ── API <──────────┘
+                                         │
+                           Worker ── claim/process/update
+```
+
+### Persistence model
+
+Postgres stores the queue, lifecycle, progress, and results. The main
+relationships are:
+
+```
+Organization ──< User ──< Job
+                         ├──< Iteration ──< TaskResult
+                         └──< AgentVersion
+```
+
+- **Job** is the durable unit of work. It records its owner, lifecycle status,
+  timestamps, stop reason or error, requested tasks, and best score/version.
+- **Iteration** records each benchmark/optimization cycle, its current phase,
+  live task progress, score, and phase timestamps.
+- **TaskResult** stores the final outcome and trace for each task in an
+  iteration.
+- **AgentVersion** stores every complete agent revision so accepted and rejected
+  attempts remain reproducible.
+
+The job moves through the following lifecycle:
+
+```
+queued → running → completed
+                 → failed
+queued/running   → cancelled
+```
+
+### How jobs are claimed and processed
+
+The FastAPI lifespan starts one asynchronous worker alongside the API. Its loop
+selects the oldest queued job and conditionally changes it from `queued` to
+`running` before handing its ID to the job processor. If no work is available,
+the worker waits briefly and checks again.
+
+The processor reloads the job, runs its benchmark and optimization iterations,
+and commits each meaningful state transition. On success it marks the job
+`completed`; unexpected errors are persisted and mark it `failed`. Cancellation
+also travels through Postgres, allowing the processor and benchmark executor to
+observe it without a direct call from the API process.
+
+### How progress stays current
+
+Before a benchmark starts, the processor creates an iteration with its phase and
+the task IDs waiting to run. While Harbor is running, it observes which tasks
+are pending or active. Whenever that set changes, a progress callback updates
+the iteration through a fresh database session, so polling requests can read
+progress while the main processor is still busy.
+
+The API derives completed tasks from those live sets. Once a benchmark finishes,
+the processor persists the score and per-task passed, failed, or infrastructure
+error results, then advances the iteration phase. Job-level fields such as the
+best score, best agent version, stop reason, and final status are updated as the
+optimization loop progresses.
+
+### Status APIs
+
+- `POST /jobs` — submit a job and receive `202 Accepted` with its ID.
+- `GET /jobs/{id}` — primary polling endpoint; returns lifecycle status, current
+  iteration summaries, live task progress, latest task results, and best score.
+- `GET /jobs?status=...` — list visible jobs, optionally filtered by lifecycle
+  status.
+- `GET /jobs/{id}/iterations` — read the complete iteration history.
+- `GET /jobs/{id}/iterations/{n}` — inspect one iteration and its task results,
+  traces, and optimizer artifacts.
+- `GET /jobs/{id}/agent-versions` — inspect the agent revisions produced by the
+  run.
+- `POST /jobs/{id}/cancel` — request cancellation of queued or running work.
+
+All reads use the same persisted state written by the worker and enforce the
+caller's organization and job visibility rules.
+
+Postgres is therefore the communication boundary between the API and worker.
+The API writes submissions and reads status; the worker reads pending work and
+persists progress and results. This keeps benchmark work out of the request path
+and gives both layers one durable source of truth.
+
+For this project, the worker runs alongside the API and the database acts as the
+queue. A production deployment requiring multiple workers or horizontal scaling
+would move job delivery to a dedicated queue such as Redis/Celery while keeping
+the same submit-and-poll API.
+
 ## Quick start
 
 ### 1. Start Postgres
 
 ```bash
+docker compose up -d db
+```
+
+If the schema changed (e.g. iteration columns), wipe the volume so Postgres is recreated cleanly:
+
+```bash
+docker compose down -v
 docker compose up -d db
 ```
 
@@ -104,7 +206,7 @@ Override via `POST /jobs` `task_ids` field.
 2. **Iterations 1..N:** optimizer reads failing traces + accumulated learnings → proposes full new `agent.py` → run benchmark → accept if `val_score` improved, else reject.
 3. **Stop when:** patience exhausted (N rounds without improvement), `max_iterations` reached, all tasks pass, or cancelled.
 
-All phases persist to Postgres as they complete (`bench_started_at`, `llm_finished_at`, etc.) for live observability of async runs.
+All phases persist to Postgres as they complete (`bench_started_at`, `optimizer_finished_at`, etc.) for live observability of async runs.
 
 ## Differences from auto-harness
 

@@ -9,7 +9,7 @@ from app.db import get_session
 from app.harness.template import DEFAULT_TASK_IDS
 from app.models.job import Job, JobStatus, StopReason
 from app.models.user import Role, User
-from app.schemas.agent_version import AgentVersionDetail, AgentVersionSummary
+from app.schemas.agent_version import AgentVersionDetail
 from app.schemas.iteration import IterationDetail, IterationSummary
 from app.schemas.job import JobCreate, JobResponse, JobSummary
 from app.services.agent_versions import get_agent_version, list_agent_versions
@@ -121,24 +121,30 @@ async def get_iteration_detail(
     iteration = await get_iteration(session, job_id, iteration_no)
     if iteration is None:
         raise HTTPException(status_code=404, detail="Iteration not found")
+    job = await session.get(Job, job_id)
     task_results = await get_task_results_for_iteration(session, iteration.id)
     proposed = await proposed_version_no(session, job_id, iteration.iteration_no)
-    return iteration_to_detail(iteration, task_results, proposed_agent_version_no=proposed)
+    return iteration_to_detail(
+        iteration,
+        task_results,
+        all_task_ids=list(job.task_ids) if job is not None else None,
+        proposed_agent_version_no=proposed,
+    )
 
 
 @router.get(
     "/{job_id}/agent-versions",
-    response_model=list[AgentVersionSummary],
+    response_model=list[AgentVersionDetail],
     summary="List all agent versions for a job",
 )
 async def list_job_agent_versions(
     job_id: str,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
-) -> list[AgentVersionSummary]:
+) -> list[AgentVersionDetail]:
     await _get_visible_job(session, job_id, user)
     versions = await list_agent_versions(session, job_id)
-    return [AgentVersionSummary.model_validate(v) for v in versions]
+    return [AgentVersionDetail.model_validate(v) for v in versions]
 
 
 @router.get(

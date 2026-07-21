@@ -4,8 +4,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-# pending, running, completed
-TaskProgressCallback = Callable[[int, int, int], Awaitable[None]]
+# pending_ids, running_ids
+TaskProgressCallback = Callable[[list[str], list[str]], Awaitable[None]]
 CancellationCallback = Callable[[], Awaitable[bool]]
 
 

@@ -50,10 +50,10 @@ class HarborExecutor(Executor):
     ) -> BenchmarkResult:
         loop = asyncio.get_running_loop()
 
-        def sync_progress(pending: int, running: int, completed: int) -> None:
+        def sync_progress(pending_ids: list[str], running_ids: list[str]) -> None:
             if on_progress is None:
                 return
-            fut = asyncio.run_coroutine_threadsafe(on_progress(pending, running, completed), loop)
+            fut = asyncio.run_coroutine_threadsafe(on_progress(pending_ids, running_ids), loop)
             fut.result(timeout=30)
 
         def sync_should_cancel() -> bool:
@@ -74,14 +74,14 @@ class HarborExecutor(Executor):
         self,
         task_ids: list[str],
         agent_content: str,
-        on_progress: Callable[[int, int, int], None] | None = None,
+        on_progress: Callable[[list[str], list[str]], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> BenchmarkResult:
         settings = get_settings()
         preflight_error = self._preflight(settings)
         if preflight_error:
             if on_progress:
-                on_progress(0, 0, len(task_ids))
+                on_progress([], [])
             return self._infra_failure(task_ids, preflight_error)
 
         self.workspace.ensure_repo()
@@ -110,10 +110,13 @@ class HarborExecutor(Executor):
             str(self.config.get("per_task_timeout", settings.per_task_timeout_sec)),
         ]
 
-        if on_progress:
-            on_progress(len(task_ids), 0, 0)
+        # Workspace is reused across iterations (and via harness_data volume); wipe
+        # prior run artifacts so progress polling never sees stale result.json files.
+        traces_dir = self.workspace.traces_dir
+        _clear_traces_dir(traces_dir)
 
-        jobs_root = self.workspace.root / "workspace" / "tbench_jobs"
+        if on_progress:
+            on_progress(list(task_ids), [])
         timeout_sec = max(600, len(task_ids) * 300)
         try:
             proc = subprocess.Popen(
@@ -126,17 +129,17 @@ class HarborExecutor(Executor):
             )
         except Exception as e:
             if on_progress:
-                on_progress(0, 0, len(task_ids))
+                on_progress([], [])
             return self._infra_failure(task_ids, f"Harbor subprocess failed to start: {e}")
 
         deadline = time.monotonic() + timeout_sec
-        last_progress: tuple[int, int, int] | None = None
+        last_progress: tuple[list[str], list[str]] | None = None
         timed_out = False
         cancelled = False
         try:
             while True:
                 rc = proc.poll()
-                progress = _read_harbor_progress(jobs_root, len(task_ids))
+                progress = _read_harbor_progress(traces_dir, task_ids)
                 if progress is not None and progress != last_progress and on_progress:
                     on_progress(*progress)
                     last_progress = progress
@@ -159,7 +162,7 @@ class HarborExecutor(Executor):
             except Exception:
                 stdout, stderr = "", ""
             if on_progress:
-                on_progress(0, 0, len(task_ids))
+                on_progress([], [])
             return self._infra_failure(task_ids, f"Harbor subprocess failed: {e}")
 
         if cancelled:
@@ -168,11 +171,11 @@ class HarborExecutor(Executor):
 
         if timed_out:
             if on_progress:
-                on_progress(0, 0, len(task_ids))
+                on_progress([], [])
             return self._infra_failure(task_ids, "Harbor subprocess timed out")
 
         if on_progress:
-            final = _read_harbor_progress(jobs_root, len(task_ids)) or (0, 0, len(task_ids))
+            final = _read_harbor_progress(traces_dir, task_ids) or ([], [])
             on_progress(*final)
 
         log = _combine_logs(stdout, stderr)
@@ -307,47 +310,44 @@ def _stop_process(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def _read_harbor_progress(jobs_root: Path, total: int) -> tuple[int, int, int] | None:
-    """Read live pending/running/completed counts from Harbor's job result.json."""
-    if not jobs_root.exists():
+def _clear_traces_dir(traces_dir: Path) -> None:
+    """Remove leftover per-task artifacts from a previous iteration of this job."""
+    if traces_dir.exists():
+        shutil.rmtree(traces_dir)
+    traces_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _read_harbor_progress(traces_dir: Path, task_ids: list[str]) -> tuple[list[str], list[str]] | None:
+    """Derive pending/running task IDs from per-task artifact dirs.
+
+    Completed tasks have ``result.json`` under ``traces/latest/<task_id>/``.
+    A task dir with other files but no result is treated as running.
+    Never invents IDs by slicing ``task_ids`` (Harbor runs concurrently).
+    Callers must clear ``traces_dir`` before starting a new Harbor run.
+    """
+    if not traces_dir.exists():
         return None
 
-    newest: Path | None = None
-    newest_mtime = -1.0
-    for job_dir in jobs_root.iterdir():
-        if not job_dir.is_dir():
+    completed: set[str] = set()
+    running: list[str] = []
+    for task_id in task_ids:
+        task_dir = traces_dir / task_id
+        if not task_dir.is_dir():
             continue
-        result_path = job_dir / "result.json"
-        if not result_path.exists():
+        if (task_dir / "result.json").exists():
+            completed.add(task_id)
             continue
         try:
-            mtime = result_path.stat().st_mtime
+            if any(task_dir.iterdir()):
+                running.append(task_id)
         except OSError:
             continue
-        if mtime > newest_mtime:
-            newest_mtime = mtime
-            newest = result_path
 
-    if newest is None:
+    if not completed and not running:
         return None
 
-    try:
-        data = json.loads(newest.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    stats = data.get("stats") if isinstance(data, dict) else None
-    if not isinstance(stats, dict):
-        return None
-
-    completed = int(stats.get("n_completed_trials") or 0)
-    running = int(stats.get("n_running_trials") or 0)
-    pending = stats.get("n_pending_trials")
-    if pending is None:
-        pending = max(total - completed - running, 0)
-    else:
-        pending = int(pending)
-    return pending, running, completed
+    pending = [tid for tid in task_ids if tid not in completed and tid not in running]
+    return pending, running
 
 
 def _exception_from_artifacts(

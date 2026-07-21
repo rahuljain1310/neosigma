@@ -18,21 +18,23 @@ def _section(title: str) -> str:
 def format_optimizer_context(ctx: dict[str, Any] | None) -> str:
     if not ctx:
         return "(no optimizer_context stored — recreate DB or rerun job on latest code)"
+    failure_context = ctx.get("failure_context") or []
     lines = [
         f"source_agent_version_no: {ctx.get('source_agent_version_no')}",
-        f"failing_task_count: {ctx.get('failing_task_count')}",
+        f"failing_tasks: {len(failure_context)}",
         "",
         "failure_context (what the optimizer saw):",
     ]
-    for item in ctx.get("failure_context") or []:
+    for item in failure_context:
         lines.append(f"\n--- {item.get('task_id')} ({item.get('status')}) ---")
-        if item.get("failure_summary"):
-            lines.append(f"summary: {item['failure_summary']}")
-        trace = item.get("trace_excerpt") or ""
+        summary = item.get("summary") or item.get("failure_summary")
+        if summary:
+            lines.append(f"summary: {summary}")
+        trace = item.get("trace_excerpt") or item.get("trace") or ""
         if trace:
-            lines.append(f"trace_excerpt: {trace}")
+            lines.append(f"trace: {trace if isinstance(trace, str) else json.dumps(trace)[:500]}")
         else:
-            lines.append("trace_excerpt: (empty)")
+            lines.append("trace: (empty)")
     return "\n".join(lines)
 
 

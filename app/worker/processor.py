@@ -112,15 +112,14 @@ class JobProcessor:
                 phase=IterationPhase.RUNNING_BENCHMARK,
                 bench_started_at=datetime.now(timezone.utc),
                 accepted=None if iteration_no > 0 else True,
-                tasks_pending=len(job.task_ids),
-                tasks_running=0,
-                tasks_completed=0,
+                tasks_pending_ids=list(job.task_ids),
+                tasks_running_ids=[],
             )
             self.session.add(iteration)
             await self.session.flush()
             await self.session.commit()
 
-            async def on_progress(pending: int, running: int, completed: int) -> None:
+            async def on_progress(pending_ids: list[str], running_ids: list[str]) -> None:
                 # Fresh session on the same bind so Harbor's thread-bridged
                 # callbacks never share the processor session concurrently.
                 factory = async_sessionmaker(self.session.bind, expire_on_commit=False, class_=AsyncSession)
@@ -129,9 +128,8 @@ class JobProcessor:
                     row = result.scalar_one_or_none()
                     if row is None:
                         return
-                    row.tasks_pending = pending
-                    row.tasks_running = running
-                    row.tasks_completed = completed
+                    row.tasks_pending_ids = list(pending_ids)
+                    row.tasks_running_ids = list(running_ids)
                     await progress_session.commit()
 
             async def should_cancel() -> bool:
@@ -151,15 +149,14 @@ class JobProcessor:
             if job.status == JobStatus.CANCELLED:
                 iteration.phase = IterationPhase.FAILED
                 iteration.error = "Job cancelled during benchmark."
-                iteration.tasks_pending = 0
-                iteration.tasks_running = 0
+                iteration.tasks_pending_ids = []
+                iteration.tasks_running_ids = []
                 job.stop_reason = StopReason.CANCELLED
                 job.finished_at = datetime.now(timezone.utc)
                 await self.session.commit()
                 return
-            iteration.tasks_pending = 0
-            iteration.tasks_running = 0
-            iteration.tasks_completed = len(job.task_ids)
+            iteration.tasks_pending_ids = []
+            iteration.tasks_running_ids = []
             await save_iteration_results(self.session, iteration=iteration, job=job, benchmark_result=result)
             passed = sum(1 for t in result.task_results if t.status == "passed")
             failed = sum(1 for t in result.task_results if t.status == "failed")
@@ -256,7 +253,7 @@ class JobProcessor:
             assert best_version is not None
 
             iteration.phase = IterationPhase.PROPOSING
-            iteration.llm_started_at = datetime.now(timezone.utc)
+            iteration.optimizer_started_at = datetime.now(timezone.utc)
             await self.session.commit()
 
             proposal = await self.optimizer.propose(
@@ -279,16 +276,13 @@ class JobProcessor:
                 await self.session.commit()
                 return
 
-            iteration.llm_finished_at = datetime.now(timezone.utc)
+            iteration.optimizer_finished_at = datetime.now(timezone.utc)
             iteration.llm_prompt = proposal.prompt
             iteration.llm_response = proposal.raw_response
             iteration.improvement_rationale = proposal.rationale
             iteration.learnings = proposal.learnings
             iteration.optimizer_context = {
                 "source_agent_version_no": best_version_no,
-                "failing_task_count": len(proposal.failure_context),
-                "passed_task_count": len(proposal.success_context),
-                "infra_error_count": len(proposal.infra_context),
                 "failure_context": proposal.failure_context,
                 "success_context": proposal.success_context,
                 "infra_context": proposal.infra_context,
@@ -357,7 +351,7 @@ class JobProcessor:
                     iteration_no,
                     failure.get("task_id"),
                     failure.get("status"),
-                    (failure.get("failure_summary") or "")[:120],
+                    (failure.get("summary") or "")[:120],
                     str(failure.get("trace") or "")[:240],
                 )
 

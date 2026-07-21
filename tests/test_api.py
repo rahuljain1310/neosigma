@@ -214,10 +214,10 @@ async def test_optimization_loop(test_env):
     assert body["status"] == "completed"
     assert body["best_val_score"] is not None
     assert len(body["iterations"]) >= 2
-    assert body["iterations"][0]["tasks_passed"] + body["iterations"][0]["tasks_failed"] > 0
-    assert body["iterations"][0]["tasks_completed"] == len(body["task_ids"])
-    assert body["iterations"][0]["tasks_pending"] == 0
-    assert body["iterations"][0]["tasks_running"] == 0
+    summary0 = body["iterations"][0]["tasks_summary"]
+    assert len(summary0["passed"]) + len(summary0["failed"]) + len(summary0["infra_error"]) == len(body["task_ids"])
+    assert summary0["pending"] == []
+    assert summary0["running"] == []
     assert body["latest_task_results"]
     assert {t["status"] for t in body["latest_task_results"]} <= {"passed", "failed", "infra_error"}
     for task in body["latest_task_results"]:

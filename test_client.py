@@ -68,13 +68,25 @@ def login(client: httpx.Client, org_name: str, email: str, password: str) -> str
     return data["access_token"]
 
 
+def _tasks_summary(it: dict[str, Any]) -> dict[str, list[str]]:
+    summary = it.get("tasks_summary") or {}
+    return {
+        "pending": list(summary.get("pending") or []),
+        "running": list(summary.get("running") or []),
+        "completed": list(summary.get("completed") or []),
+        "passed": list(summary.get("passed") or []),
+        "failed": list(summary.get("failed") or []),
+        "infra_error": list(summary.get("infra_error") or []),
+    }
+
+
 def _benchmark_snapshot(it: dict[str, Any]) -> tuple[Any, ...]:
+    ts = _tasks_summary(it)
     return (
         it.get("val_score"),
-        it.get("tasks_passed"),
-        it.get("tasks_failed"),
-        it.get("tasks_infra_error"),
-        tuple(it.get("failed_task_ids") or []),
+        tuple(ts["passed"]),
+        tuple(ts["failed"]),
+        tuple(ts["infra_error"]),
         it.get("accepted"),
     )
 
@@ -86,18 +98,16 @@ def _proposal_snapshot(it: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def _progress_snapshot(it: dict[str, Any]) -> tuple[int, int, int]:
-    return (
-        int(it.get("tasks_pending") or 0),
-        int(it.get("tasks_running") or 0),
-        int(it.get("tasks_completed") or 0),
-    )
+def _progress_snapshot(it: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    ts = _tasks_summary(it)
+    return tuple(ts["pending"]), tuple(ts["running"]), tuple(ts["completed"])
 
 
 def _format_task_counts(it: dict[str, Any]) -> str:
-    passed = it.get("tasks_passed", 0)
-    failed = it.get("tasks_failed", 0)
-    infra = it.get("tasks_infra_error", 0)
+    ts = _tasks_summary(it)
+    passed = len(ts["passed"])
+    failed = len(ts["failed"])
+    infra = len(ts["infra_error"])
     total = passed + failed + infra
     return f"{passed}/{total} passed, {failed} failed, {infra} infra_error"
 
@@ -111,7 +121,7 @@ def _print_benchmark_progress(it: dict[str, Any], *, first: bool) -> None:
     iteration_no = it["iteration_no"]
     agent_v = it.get("agent_version_no")
     pending, running, completed = _progress_snapshot(it)
-    progress = _format_progress(pending, running, completed)
+    progress = _format_progress(len(pending), len(running), len(completed))
     if first:
         print(f"  [iter {iteration_no}] running benchmark with agent_v={agent_v} | {progress}")
     else:
@@ -123,7 +133,7 @@ def _print_benchmark_done(it: dict[str, Any], *, best_val_score: float | None) -
     agent_v = it.get("agent_version_no")
     val_score = it.get("val_score")
     counts = _format_task_counts(it)
-    failed_ids = it.get("failed_task_ids") or []
+    failed_ids = _tasks_summary(it)["failed"] + _tasks_summary(it)["infra_error"]
     failed_note = f" ({', '.join(failed_ids)})" if failed_ids else ""
     print(
         f"  [iter {iteration_no}] benchmark done: agent_v={agent_v} val_score={val_score:.3f} | {counts}{failed_note}"
@@ -249,7 +259,7 @@ def main() -> int:
                 if (
                     args.debug
                     and it.get("proposed_agent_version_no") is not None
-                    and it.get("llm_finished_at")
+                    and it.get("optimizer_finished_at")
                     and iteration_no not in seen_debug
                 ):
                     detail, proposed_version = fetch_iteration_debug_bundle(client, job_id, iteration_no, headers)
@@ -302,8 +312,9 @@ def main() -> int:
                 f"phase={it['phase']} val_score={it.get('val_score')} "
                 f"agent_v={it['agent_version_no']} | {counts}"
             )
-            if it.get("failed_task_ids"):
-                print(f"       failed: {', '.join(it['failed_task_ids'])}")
+            if _tasks_summary(it)["failed"] or _tasks_summary(it)["infra_error"]:
+                failed = _tasks_summary(it)["failed"] + _tasks_summary(it)["infra_error"]
+                print(f"       failed: {', '.join(failed)}")
             if it.get("improvement_rationale"):
                 print(f"       changes: {it['improvement_rationale'][:160]}")
 

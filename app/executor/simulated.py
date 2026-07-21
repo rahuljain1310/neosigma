@@ -35,16 +35,16 @@ class SimulatedExecutor(Executor):
         if "verify" in lower and "before finishing" in lower:
             boosts += 1
 
-        total = len(task_ids)
         if on_progress:
-            await on_progress(total, 0, 0)
+            await on_progress(list(task_ids), [])
 
         task_results: list[TaskExecution] = []
         for i, task_id in enumerate(task_ids):
             if should_cancel and await should_cancel():
                 break
+            pending = task_ids[i + 1 :]
             if on_progress:
-                await on_progress(total - i - 1, 1, i)
+                await on_progress(pending, [task_id])
 
             base_pass = _stable_pass(task_id)
             effective_pass = base_pass or (i < boosts)
@@ -77,7 +77,7 @@ class SimulatedExecutor(Executor):
             )
 
             if on_progress:
-                await on_progress(total - i - 1, 0, i + 1)
+                await on_progress(pending, [])
 
         val = sum(t.reward or 0.0 for t in task_results) / max(len(task_results), 1)
         log = json.dumps(
