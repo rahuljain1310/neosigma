@@ -7,11 +7,19 @@ import argparse
 import json
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.auth import DEFAULT_ORG_NAME, DEFAULT_USER_EMAIL, DEFAULT_USER_PASSWORD
+from client_debug import (
+    DEBUG_ARTIFACTS_DIR,
+    debug_completed_job,
+    dump_iteration_debug,
+    fetch_iteration_debug_bundle,
+    print_iteration_debug,
+)
 
 DEFAULT_BASE = os.environ.get("AOS_BASE_URL", "http://localhost:8000")
 
@@ -99,11 +107,22 @@ def main() -> int:
         "--password",
         default=os.environ.get("AOS_PASSWORD", DEFAULT_USER_PASSWORD),
     )
-    parser.add_argument("--executor", choices=["simulated", "harbor"], default="simulated")
+    parser.add_argument("--executor", choices=["simulated", "harbor"], default="harbor")
     parser.add_argument("--max-iterations", type=int, default=3)
     parser.add_argument("--patience", type=int, default=2)
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--task-ids", nargs="*", default=None)
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print optimizer traces and agent.py diffs after each proposal",
+    )
+    parser.add_argument(
+        "--dump-dir",
+        type=Path,
+        default=None,
+        help="Write per-iteration debug artifacts (default: .debug/<job_id> when --debug)",
+    )
     args = parser.parse_args()
 
     with httpx.Client(base_url=args.base_url, timeout=60.0) as client:
@@ -132,7 +151,11 @@ def main() -> int:
 
         seen_benchmarks: dict[int, tuple[Any, ...]] = {}
         seen_proposals: dict[int, tuple[Any, ...]] = {}
+        seen_debug: set[int] = set()
         last_status: str | None = None
+        dump_dir = args.dump_dir
+        if args.debug and dump_dir is None:
+            dump_dir = DEBUG_ARTIFACTS_DIR / job_id
 
         while True:
             resp = client.get(f"/jobs/{job_id}", headers=headers)
@@ -175,6 +198,29 @@ def main() -> int:
                     )
                     seen_proposals[iteration_no] = proposal_key
 
+                if (
+                    args.debug
+                    and it.get("proposed_agent_version_no") is not None
+                    and it.get("llm_finished_at")
+                    and iteration_no not in seen_debug
+                ):
+                    detail, proposed_version = fetch_iteration_debug_bundle(
+                        client, job_id, iteration_no, headers
+                    )
+                    print_iteration_debug(
+                        iteration_no=iteration_no,
+                        detail=detail,
+                        proposed_version=proposed_version,
+                    )
+                    if dump_dir:
+                        dump_iteration_debug(
+                            dump_dir=dump_dir,
+                            iteration_no=iteration_no,
+                            detail=detail,
+                            proposed_version=proposed_version,
+                        )
+                    seen_debug.add(iteration_no)
+
             if status in {"completed", "failed", "cancelled"}:
                 break
             time.sleep(args.poll_interval)
@@ -212,11 +258,8 @@ def main() -> int:
             if it.get("improvement_rationale"):
                 print(f"       changes: {it['improvement_rationale'][:160]}")
 
-        if iterations:
-            detail = client.get(f"/jobs/{job_id}/iterations/0", headers=headers)
-            detail.raise_for_status()
-            d = detail.json()
-            print(f"\n=== Iteration 0 detail: {len(d.get('task_results', []))} task results ===")
+        if args.debug and dump_dir:
+            print(f"\nDebug artifacts in {dump_dir.resolve()}")
 
     return 0
 

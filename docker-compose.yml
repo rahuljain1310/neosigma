@@ -28,11 +28,18 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       E2B_API_KEY: ${E2B_API_KEY:-}
+      DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       OPTIMIZER_MODE: ${OPTIMIZER_MODE:-auto}
       OPTIMIZER_MODEL: ${OPTIMIZER_MODEL:-gpt-5.4}
       AGENT_MODEL: ${AGENT_MODEL:-gpt-5.4}
+      HARBOR_ENV_PROVIDER: ${HARBOR_ENV_PROVIDER:-docker}
     ports:
       - "8000:8000"
+    volumes:
+      # Let Harbor's docker provider talk to the host Docker daemon (Colima/Docker Desktop).
+      - /var/run/docker.sock:/var/run/docker.sock
+      - harness_data:/app/data/harness
 
 volumes:
   pgdata:
+  harness_data:

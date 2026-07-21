@@ -231,5 +231,6 @@ def iteration_to_detail(
         llm_prompt=iteration.llm_prompt,
         llm_response=iteration.llm_response,
         executor_log=iteration.executor_log,
+        optimizer_context=iteration.optimizer_context,
         task_results=[TaskResultOut.model_validate(t) for t in task_results],
     )

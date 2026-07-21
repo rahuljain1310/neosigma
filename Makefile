@@ -37,8 +37,15 @@ test: install ## Run tests
 openapi: install ## Export OpenAPI spec to openapi.json
 	$(UV) run python scripts/export_openapi.py
 
-client: ## Run test_client.py (logs in with default assignment credentials)
-	$(UV) run python test_client.py --executor simulated --max-iterations 15 --patience 5
+client: ## Run test_client.py against Harbor (real Terminal-Bench runs)
+	$(UV) run python test_client.py --executor harbor --max-iterations 15 --patience 5
+
+client-debug: ## Run test_client with optimizer trace/diff debug output (Harbor)
+	$(UV) run python test_client.py --executor harbor --max-iterations 15 --patience 5 --debug
+
+debug-job: ## Dump debug artifacts for JOB_ID=... (e.g. make debug-job JOB_ID=abc)
+	@test -n "$(JOB_ID)" || (echo "Usage: make debug-job JOB_ID=<job-id>" && exit 1)
+	$(UV) run python scripts/debug_job.py $(JOB_ID)
 
 clean: down ## Stop containers and remove Python caches
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

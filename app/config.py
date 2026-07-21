@@ -23,12 +23,14 @@ class Settings(BaseSettings):
     # Model used by the agent under test (harbor executor).
     agent_model: str = "gpt-5.4"
     openai_api_key: str = ""
+    e2b_api_key: str = ""
+    daytona_api_key: str = ""
 
     # Harbor executor
     harness_repo_url: str = "https://github.com/neosigmaai/auto-harness.git"
     harness_dir: str = "data/harness"
     harbor_env_provider: str = "docker"  # docker | e2b | daytona | modal
-    harbor_n_concurrent: int = 4
+    harbor_n_concurrent: int = 6
     per_task_timeout_sec: int = 1200
 
     # Worker

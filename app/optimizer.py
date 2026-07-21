@@ -21,6 +21,8 @@ class OptimizationProposal:
     learnings: str
     prompt: str
     raw_response: str
+    failure_context: list[dict]
+    source_agent_version_no: int | None = None
 
 
 class Optimizer:
@@ -39,6 +41,7 @@ class Optimizer:
         accumulated_learnings: str,
         iteration_no: int,
         val_score: float,
+        source_agent_version_no: int | None = None,
     ) -> OptimizationProposal:
         settings = get_settings()
         mode = self.effective_mode()
@@ -59,6 +62,7 @@ class Optimizer:
                     iteration_no=iteration_no,
                     val_score=val_score,
                     model=settings.optimizer_model,
+                    source_agent_version_no=source_agent_version_no,
                 )
             except Exception:
                 logger.warning(
@@ -72,6 +76,7 @@ class Optimizer:
             accumulated_learnings=accumulated_learnings,
             iteration_no=iteration_no,
             val_score=val_score,
+            source_agent_version_no=source_agent_version_no,
         )
 
     async def _propose_llm(
@@ -83,47 +88,17 @@ class Optimizer:
         iteration_no: int,
         val_score: float,
         model: str,
+        source_agent_version_no: int | None = None,
     ) -> OptimizationProposal:
-        failure_context = []
-        for t in failing_tasks[:8]:
-            failure_context.append(
-                {
-                    "task_id": t.task_id,
-                    "status": t.status,
-                    "failure_summary": t.failure_summary,
-                    "trace_excerpt": _trace_excerpt(t.trace),
-                }
-            )
-
-        prompt = f"""You are optimizing a Terminal-Bench agent by editing agent/agent.py.
-
-Current val_score: {val_score:.3f}
-Iteration: {iteration_no}
-
-Accumulated learnings:
-{accumulated_learnings or "(none yet)"}
-
-Failing tasks:
-{json.dumps(failure_context, indent=2)}
-
-Current agent/agent.py:
-```python
-{current_agent}
-```
-
-Respond with JSON only:
-{{
-  "rationale": "why this change should help",
-  "learnings": "markdown bullet list of key learnings from this iteration",
-  "agent_content": "the full new agent/agent.py file as a string"
-}}
-
-Rules:
-- Return the COMPLETE agent.py file, not a patch.
-- Focus on AGENT_INSTRUCTION, TOOLS schema, and run-loop behavior.
-- Make one focused improvement per iteration.
-- Do not change MODEL or infrastructure settings.
-"""
+        failure_context = build_failure_context(failing_tasks)
+        prompt = build_optimizer_prompt(
+            current_agent=current_agent,
+            failure_context=failure_context,
+            accumulated_learnings=accumulated_learnings,
+            iteration_no=iteration_no,
+            val_score=val_score,
+            mode="llm",
+        )
 
         response = await litellm.acompletion(
             model=model,
@@ -140,6 +115,8 @@ Rules:
             learnings=data.get("learnings", ""),
             prompt=prompt,
             raw_response=raw,
+            failure_context=failure_context,
+            source_agent_version_no=source_agent_version_no,
         )
 
     def _propose_heuristic(
@@ -150,7 +127,17 @@ Rules:
         accumulated_learnings: str,
         iteration_no: int,
         val_score: float,
+        source_agent_version_no: int | None = None,
     ) -> OptimizationProposal:
+        failure_context = build_failure_context(failing_tasks)
+        prompt = build_optimizer_prompt(
+            current_agent=current_agent,
+            failure_context=failure_context,
+            accumulated_learnings=accumulated_learnings,
+            iteration_no=iteration_no,
+            val_score=val_score,
+            mode="heuristic",
+        )
         new_agent = current_agent
         rationale_parts: list[str] = []
 
@@ -188,8 +175,16 @@ Rules:
             agent_content=new_agent,
             rationale="; ".join(rationale_parts) or "Heuristic optimizer made no changes.",
             learnings=learnings,
-            prompt="(heuristic optimizer — no LLM prompt)",
-            raw_response=json.dumps({"rationale": rationale_parts}),
+            prompt=prompt,
+            raw_response=json.dumps(
+                {
+                    "mode": "heuristic",
+                    "rationale": rationale_parts,
+                    "changed": new_agent != current_agent,
+                }
+            ),
+            failure_context=failure_context,
+            source_agent_version_no=source_agent_version_no,
         )
 
 
@@ -204,7 +199,71 @@ def _inject_after_instruction(agent: str, snippet: str) -> str:
     return agent + "\n" + snippet
 
 
-def _trace_excerpt(trace: dict | list | None, limit: int = 1200) -> str:
+def build_failure_context(
+    failing_tasks: list[TaskExecution], *, limit: int = 8
+) -> list[dict]:
+    context: list[dict] = []
+    for task in failing_tasks[:limit]:
+        context.append(
+            {
+                "task_id": task.task_id,
+                "status": task.status,
+                "failure_summary": task.failure_summary,
+                "trace_excerpt": trace_excerpt(task.trace),
+            }
+        )
+    return context
+
+
+def build_optimizer_prompt(
+    *,
+    current_agent: str,
+    failure_context: list[dict],
+    accumulated_learnings: str,
+    iteration_no: int,
+    val_score: float,
+    mode: str,
+) -> str:
+    mode_note = (
+        "Respond with JSON only:\n"
+        "{\n"
+        '  "rationale": "why this change should help",\n'
+        '  "learnings": "markdown bullet list of key learnings from this iteration",\n'
+        '  "agent_content": "the full new agent/agent.py file as a string"\n'
+        "}\n\n"
+        "Rules:\n"
+        "- Return the COMPLETE agent.py file, not a patch.\n"
+        "- Focus on AGENT_INSTRUCTION, TOOLS schema, and run-loop behavior.\n"
+        "- Make one focused improvement per iteration.\n"
+        "- Do not change MODEL or infrastructure settings."
+        if mode == "llm"
+        else (
+            "(heuristic mode — the service applies fixed prompt edits instead of "
+            "calling an LLM; this prompt is stored for debugging what the optimizer saw.)"
+        )
+    )
+    return f"""You are optimizing a Terminal-Bench agent by editing agent/agent.py.
+
+Optimizer mode: {mode}
+Current val_score: {val_score:.3f}
+Iteration: {iteration_no}
+
+Accumulated learnings:
+{accumulated_learnings or "(none yet)"}
+
+Failing tasks (with trace excerpts the optimizer sees):
+{json.dumps(failure_context, indent=2)}
+
+Current agent/agent.py:
+```python
+{current_agent}
+```
+
+{mode_note}
+"""
+
+
+def trace_excerpt(trace: dict | list | None, limit: int = 1200) -> str:
     if trace is None:
         return ""
     text = json.dumps(trace, default=str)

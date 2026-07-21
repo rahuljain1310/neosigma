@@ -8,6 +8,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     Text,
     UniqueConstraint,
 )
@@ -60,6 +61,8 @@ class Iteration(IdTimestampMixin, Base):
     llm_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     improvement_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     learnings: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured snapshot of failing tasks/traces fed to the optimizer.
+    optimizer_context: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
 
     executor_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

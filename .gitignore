@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 data/
+.debug/
 .pytest_cache/
 uv.lock
 openapi.json

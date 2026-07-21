@@ -189,6 +189,7 @@ class JobProcessor:
                 accumulated_learnings=job.learnings,
                 iteration_no=iteration_no,
                 val_score=best_score or 0.0,
+                source_agent_version_no=best_version_no,
             )
 
             iteration.llm_finished_at = datetime.now(timezone.utc)
@@ -196,10 +197,15 @@ class JobProcessor:
             iteration.llm_response = proposal.raw_response
             iteration.improvement_rationale = proposal.rationale
             iteration.learnings = proposal.learnings
+            iteration.optimizer_context = {
+                "source_agent_version_no": best_version_no,
+                "failing_task_count": len(best_failures),
+                "failure_context": proposal.failure_context,
+            }
             job.learnings = proposal.learnings
             await self.session.commit()
 
-            await create_agent_version(
+            new_version = await create_agent_version(
                 self.session,
                 job_id=job.id,
                 version_no=next_version_no,
@@ -212,13 +218,34 @@ class JobProcessor:
             next_version_no += 1
             iteration.phase = IterationPhase.DONE
             await self.session.commit()
+            diff_preview = (new_version.diff or "").strip()
+            if diff_preview:
+                diff_lines = diff_preview.splitlines()
+                if len(diff_lines) > 24:
+                    diff_preview = "\n".join(diff_lines[:24] + ["... (truncated)"])
+            else:
+                diff_preview = "(no diff — agent unchanged)"
             logger.info(
-                "[job %s] iter %s proposal ready: created agent_v=%s rationale=%s",
+                "[job %s] iter %s proposal ready: source_agent_v=%s -> agent_v=%s "
+                "failing_tasks=%s rationale=%s\n%s",
                 job.id,
                 iteration_no,
+                best_version_no,
                 candidate_version_no,
+                [t.task_id for t in best_failures],
                 (proposal.rationale or "")[:200],
+                diff_preview,
             )
+            for failure in proposal.failure_context[:4]:
+                logger.info(
+                    "[job %s] iter %s optimizer saw task=%s status=%s summary=%s trace=%s",
+                    job.id,
+                    iteration_no,
+                    failure.get("task_id"),
+                    failure.get("status"),
+                    (failure.get("failure_summary") or "")[:120],
+                    (failure.get("trace_excerpt") or "")[:240],
+                )
 
         job.stop_reason = StopReason.MAX_ITERATIONS
 

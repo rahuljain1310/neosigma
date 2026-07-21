@@ -82,10 +82,18 @@ Auth: log in with `POST /auth/login`, then send `Authorization: Bearer <access_t
 
 | Executor | Use case |
 |----------|----------|
-| `simulated` | Deterministic fake benchmark for M1/M2/M4 dev (default) |
+| `simulated` | Deterministic fake benchmark for M1/M2/M4 dev |
 | `harbor` | Real Terminal-Bench via auto-harness + Harbor sandboxes (M3) |
 
-Harbor mode requires `harbor` CLI (`uv tool install harbor`), Docker or E2B credentials, and clones [neosigmaai/auto-harness](https://github.com/neosigmaai/auto-harness) into `data/harness/<job_id>/`.
+Harbor mode clones [neosigmaai/auto-harness](https://github.com/neosigmaai/auto-harness) and runs `harbor run` with `--env` from `HARBOR_ENV_PROVIDER`:
+
+| Provider | Notes |
+|----------|-------|
+| `daytona` | Cloud sandboxes ([TB 2.0 docs](https://www.tbench.ai/docs/run-terminal-bench-2-0)); needs `DAYTONA_API_KEY`. Best on Apple Silicon. |
+| `e2b` | Cloud sandboxes; needs `E2B_API_KEY` |
+| `docker` | Local Docker socket; Terminal-Bench images are `linux/amd64` and often fail on arm64 hosts |
+
+Also needs an LLM key (`OPENAI_API_KEY`) for the agent under test.
 
 ## TerminalBench task subset
 

@@ -184,13 +184,23 @@ class HarnessAgent(BaseAgent):
 # Representative fast Terminal-Bench subset for local/dev runs.
 DEFAULT_TASK_IDS = [
     "regex-log",
-    "cobol-modernization",
-    "git-multibranch",
-    "sqlite-with-gcov",
-    "path-tracing",
-    "qemu-alpine",
-    "configure-git-webserver",
-    "extract-moves-from-video",
-    "fix-git",
-    "hf-model-inference",
+    "filter-js-from-html",
+    "break-filter-js-from-html",
+    "extract-elf",
+    "log-summary-date-ranges",
+    "gcode-to-text",
+
+    ## Slower (tmp - hide)
+    # "fix-git",
+    # "git-leak-recovery",
+    # "git-multibranch",
+    # "sqlite-with-gcov",
+    # "cobol-modernization",
+    # "path-tracing",
+
+    ## Removed
+    # "qemu-alpine",
+    # "configure-git-webserver",
+    # "extract-moves-from-video",
+    # "hf-model-inference",
 ]

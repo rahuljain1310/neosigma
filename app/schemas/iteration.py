@@ -49,4 +49,8 @@ class IterationDetail(IterationSummary):
     llm_prompt: str | None = None
     llm_response: str | None = None
     executor_log: str | None = None
+    optimizer_context: dict[str, Any] | None = Field(
+        default=None,
+        description="Failing tasks/traces and source agent version fed to the optimizer.",
+    )
     task_results: list[TaskResultOut] = Field(default_factory=list)

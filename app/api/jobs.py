@@ -7,9 +7,11 @@ from app.db import get_session
 from app.harness.template import DEFAULT_TASK_IDS
 from app.models.job import Job, JobStatus
 from app.models.user import Role, User
+from app.schemas.agent_version import AgentVersionDetail, AgentVersionSummary
 from app.schemas.common import ErrorResponse
 from app.schemas.iteration import IterationDetail, IterationSummary
 from app.schemas.job import JobCreate, JobResponse
+from app.services.agent_versions import get_agent_version, list_agent_versions
 from app.services.jobs import (
     best_agent_version_no,
     build_iteration_summaries,
@@ -115,6 +117,41 @@ async def get_iteration_detail(
     return iteration_to_detail(
         iteration, task_results, proposed_agent_version_no=proposed
     )
+
+
+@router.get(
+    "/{job_id}/agent-versions",
+    response_model=list[AgentVersionSummary],
+    responses={404: {"model": ErrorResponse}},
+    summary="List all agent versions for a job",
+)
+async def list_job_agent_versions(
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[AgentVersionSummary]:
+    await _get_visible_job(session, job_id, user)
+    versions = await list_agent_versions(session, job_id)
+    return [AgentVersionSummary.model_validate(v) for v in versions]
+
+
+@router.get(
+    "/{job_id}/agent-versions/{version_no}",
+    response_model=AgentVersionDetail,
+    responses={404: {"model": ErrorResponse}},
+    summary="Get one agent version (full agent.py + diff)",
+)
+async def get_job_agent_version(
+    job_id: str,
+    version_no: int,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> AgentVersionDetail:
+    await _get_visible_job(session, job_id, user)
+    version = await get_agent_version(session, job_id, version_no)
+    if version is None:
+        raise HTTPException(status_code=404, detail="Agent version not found")
+    return AgentVersionDetail.model_validate(version)
 
 
 @router.post(

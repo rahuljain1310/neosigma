@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +12,8 @@ from pathlib import Path
 from app.config import get_settings
 from app.executor.base import BenchmarkResult, Executor, TaskExecution
 from app.harness.workspace import HarnessWorkspace, make_workspace
+
+logger = logging.getLogger(__name__)
 
 
 class HarborExecutor(Executor):
@@ -29,6 +33,10 @@ class HarborExecutor(Executor):
 
     def _run_sync(self, task_ids: list[str], agent_content: str) -> BenchmarkResult:
         settings = get_settings()
+        preflight_error = self._preflight(settings)
+        if preflight_error:
+            return self._infra_failure(task_ids, preflight_error)
+
         self.workspace.ensure_repo()
         self.workspace.write_agent(agent_content)
         self._write_experiment_config(task_ids, settings)
@@ -37,14 +45,21 @@ class HarborExecutor(Executor):
         env["PYTHONPATH"] = str(self.workspace.root) + os.pathsep + env.get("PYTHONPATH", "")
         env["AGENT_MODEL"] = self.config.get("agent_model", settings.agent_model)
         env["HARNESS_SAVE_TRACE"] = "1"
+        if settings.openai_api_key and not env.get("OPENAI_API_KEY"):
+            env["OPENAI_API_KEY"] = settings.openai_api_key
+        if settings.e2b_api_key and not env.get("E2B_API_KEY"):
+            env["E2B_API_KEY"] = settings.e2b_api_key
+        if settings.daytona_api_key and not env.get("DAYTONA_API_KEY"):
+            env["DAYTONA_API_KEY"] = settings.daytona_api_key
 
+        env_provider = self.config.get("env_provider", settings.harbor_env_provider)
         cmd = [
             sys.executable,
             "-c",
             _RUNNER_SNIPPET,
             str(self.workspace.root),
             json.dumps(task_ids),
-            self.config.get("env_provider", settings.harbor_env_provider),
+            env_provider,
             str(self.config.get("n_concurrent", settings.harbor_n_concurrent)),
             self.config.get("agent_model", settings.agent_model),
             str(self.config.get("per_task_timeout", settings.per_task_timeout_sec)),
@@ -58,51 +73,47 @@ class HarborExecutor(Executor):
                 timeout=max(600, len(task_ids) * 300),
                 env=env,
             )
-            log = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
-            payload = json.loads(proc.stdout.strip().splitlines()[-1]) if proc.stdout.strip() else {}
         except subprocess.TimeoutExpired:
-            return BenchmarkResult(
-                task_results=[
-                    TaskExecution(
-                        task_id=tid,
-                        reward=None,
-                        status="infra_error",
-                        failure_summary="Harbor subprocess timed out",
-                    )
-                    for tid in task_ids
-                ],
-                val_score=0.0,
-                executor_log="Harbor subprocess timed out",
-            )
+            return self._infra_failure(task_ids, "Harbor subprocess timed out")
         except Exception as e:
-            return BenchmarkResult(
-                task_results=[
-                    TaskExecution(
-                        task_id=tid,
-                        reward=None,
-                        status="infra_error",
-                        failure_summary=str(e),
-                    )
-                    for tid in task_ids
-                ],
-                val_score=0.0,
-                executor_log=str(e),
+            return self._infra_failure(task_ids, f"Harbor subprocess failed to start: {e}")
+
+        log = _combine_logs(proc.stdout, proc.stderr)
+        payload, parse_error = _extract_payload(proc.stdout)
+        if parse_error is not None:
+            summary = (
+                f"Harbor runner did not return JSON results (exit={proc.returncode}). "
+                f"{parse_error}"
             )
+            logger.error("[harbor job=%s] %s\n%s", self.job_id, summary, log[-4000:])
+            return self._infra_failure(task_ids, summary, executor_log=log)
+
+        if proc.returncode != 0 and not payload.get("results"):
+            summary = f"Harbor runner exited {proc.returncode}"
+            logger.error("[harbor job=%s] %s\n%s", self.job_id, summary, log[-4000:])
+            return self._infra_failure(task_ids, summary, executor_log=log)
 
         results_map: dict[str, float | None] = payload.get("results", {})
         task_results: list[TaskExecution] = []
+        global_error = payload.get("error")
         for task_id in task_ids:
             reward = results_map.get(task_id)
             trace, verifier = self._load_artifacts(task_id)
+            exception = _exception_from_artifacts(verifier, self.workspace, task_id)
             if reward is None:
                 status = "infra_error"
-                summary = "No verifier result — sandbox or agent timeout"
+                summary = (
+                    exception
+                    or (str(global_error) if global_error else None)
+                    or _infer_infra_summary(log)
+                    or "No verifier result — sandbox or agent timeout"
+                )
             elif reward >= 0.5:
                 status = "passed"
                 summary = None
             else:
                 status = "failed"
-                summary = f"Task {task_id} failed with reward {reward:.2f}"
+                summary = exception or f"Task {task_id} failed with reward {reward:.2f}"
 
             task_results.append(
                 TaskExecution(
@@ -117,6 +128,81 @@ class HarborExecutor(Executor):
 
         val = sum((t.reward or 0.0) for t in task_results) / max(len(task_results), 1)
         return BenchmarkResult(task_results=task_results, val_score=val, executor_log=log)
+
+    def _preflight(self, settings) -> str | None:
+        if shutil.which("harbor") is None:
+            return (
+                "harbor CLI not found on PATH. Rebuild the API image after installing "
+                "the harbor package (pip install harbor)."
+            )
+        env_provider = self.config.get("env_provider", settings.harbor_env_provider)
+        if env_provider == "docker":
+            if shutil.which("docker") is None:
+                return "docker CLI not found; required when HARBOR_ENV_PROVIDER=docker"
+            probe = subprocess.run(
+                ["docker", "info"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if probe.returncode != 0:
+                detail = (probe.stderr or probe.stdout or "").strip()[:500]
+                return (
+                    "Cannot reach Docker daemon from the API container "
+                    f"(mount /var/run/docker.sock). {detail}"
+                )
+            arch = subprocess.run(
+                ["docker", "info", "--format", "{{.Architecture}}"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            host_arch = (arch.stdout or "").strip().lower()
+            if host_arch in {"aarch64", "arm64"}:
+                logger.warning(
+                    "[harbor] Docker host architecture is %s; Terminal-Bench images are "
+                    "linux/amd64 and often fail on ARM. Prefer HARBOR_ENV_PROVIDER=daytona "
+                    "or e2b, or run Colima/Docker with amd64/qemu.",
+                    host_arch,
+                )
+        elif env_provider == "e2b":
+            if not (settings.e2b_api_key or os.environ.get("E2B_API_KEY")):
+                return "E2B_API_KEY is required when HARBOR_ENV_PROVIDER=e2b"
+            if not _harbor_extra_available("e2b"):
+                return (
+                    "Harbor e2b extra missing. Rebuild API image with "
+                    "pip install 'harbor[e2b]' (or harbor[cloud])."
+                )
+        elif env_provider == "daytona":
+            if not (settings.daytona_api_key or os.environ.get("DAYTONA_API_KEY")):
+                return "DAYTONA_API_KEY is required when HARBOR_ENV_PROVIDER=daytona"
+            if not _harbor_extra_available("daytona"):
+                return (
+                    "Harbor daytona extra missing. Rebuild API image with "
+                    "pip install 'harbor[daytona]' (or harbor[cloud])."
+                )
+        return None
+
+    def _infra_failure(
+        self,
+        task_ids: list[str],
+        summary: str,
+        *,
+        executor_log: str | None = None,
+    ) -> BenchmarkResult:
+        return BenchmarkResult(
+            task_results=[
+                TaskExecution(
+                    task_id=tid,
+                    reward=None,
+                    status="infra_error",
+                    failure_summary=summary,
+                )
+                for tid in task_ids
+            ],
+            val_score=0.0,
+            executor_log=executor_log or summary,
+        )
 
     def _write_experiment_config(self, task_ids: list[str], settings) -> None:
         import yaml
@@ -149,22 +235,138 @@ class HarborExecutor(Executor):
         return trace, verifier
 
 
+def _harbor_extra_available(provider: str) -> bool:
+    """Detect whether harbor's optional provider package is importable."""
+    if provider == "daytona":
+        try:
+            import daytona  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
+    if provider == "e2b":
+        try:
+            import e2b  # noqa: F401
+
+            return True
+        except ImportError:
+            return False
+    return True
+
+
+def _exception_from_artifacts(
+    verifier: dict | list | None,
+    workspace: HarnessWorkspace,
+    task_id: str,
+) -> str | None:
+    """Pull Harbor exception text from result.json / exception.txt when present."""
+    if isinstance(verifier, dict):
+        info = verifier.get("exception_info")
+        if isinstance(info, dict):
+            msg = info.get("exception_message") or info.get("exception_type")
+            if msg:
+                return str(msg)[:800]
+    base = workspace.traces_dir / task_id
+    for name in ("exception.txt", "result.json"):
+        path = base / name
+        if not path.exists():
+            continue
+        text = path.read_text(errors="replace")
+        if name == "exception.txt" and text.strip():
+            return text.strip()[:800]
+        if name == "result.json":
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            info = data.get("exception_info") if isinstance(data, dict) else None
+            if isinstance(info, dict):
+                msg = info.get("exception_message") or info.get("exception_type")
+                if msg:
+                    return str(msg)[:800]
+    return None
+
+
+def _infer_infra_summary(log: str) -> str | None:
+    markers = (
+        "MissingExtraError",
+        "pip install 'harbor[daytona]'",
+        "pip install 'harbor[e2b]'",
+        "DAYTONA_API_KEY",
+        "E2B_API_KEY",
+        "AuthenticationError",
+        "insufficient_quota",
+        "RateLimitError",
+    )
+    for marker in markers:
+        if marker in log:
+            # Prefer a short window around the marker.
+            idx = log.find(marker)
+            start = max(0, idx - 80)
+            end = min(len(log), idx + 220)
+            return " ".join(log[start:end].split())
+    return None
+
+
+def _combine_logs(stdout: str | None, stderr: str | None) -> str:
+    parts = []
+    if stdout:
+        parts.append(stdout)
+    if stderr:
+        parts.append(stderr)
+    return "\n".join(parts).strip()
+
+
+def _extract_payload(stdout: str | None) -> tuple[dict, str | None]:
+    """Parse the final JSON object emitted by the runner snippet.
+
+    auto-harness prints human logs before the result line; only the last
+    JSON object line is the payload.
+    """
+    if not stdout or not stdout.strip():
+        return {}, "empty stdout from harbor runner"
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and "results" in data:
+            return data, None
+    preview = stdout.strip().splitlines()[-1][:240]
+    return {}, f"no JSON results line found; last stdout line was: {preview!r}"
+
+
 _RUNNER_SNIPPET = r'''
-import json, os, sys
+import json, os, sys, traceback
 from benchmark import TerminalBenchRunner
 
 root, task_ids_json, env_provider, n_concurrent, agent_model, per_task_timeout = sys.argv[1:7]
 os.chdir(root)
 task_ids = json.loads(task_ids_json)
-runner = TerminalBenchRunner(
-    agent_model=agent_model,
-    split="train",
-    env_provider=env_provider,
-    n_concurrent=int(n_concurrent),
-    per_task_timeout=int(per_task_timeout),
-    jobs_dir="workspace/tbench_jobs",
-)
-results = runner.run(task_ids=task_ids)
-val = runner.val_score(results)
-print(json.dumps({"results": results, "val_score": val}))
+try:
+    runner = TerminalBenchRunner(
+        agent_model=agent_model,
+        split="train",
+        env_provider=env_provider,
+        n_concurrent=int(n_concurrent),
+        per_task_timeout=int(per_task_timeout),
+        jobs_dir="workspace/tbench_jobs",
+    )
+    results = runner.run(task_ids=task_ids)
+    # TerminalBenchRunner can return all-null rewards when harbor crashes early.
+    if results and all(v is None for v in results.values()):
+        print(
+            "[benchmark] WARNING: all task rewards are null — harbor likely failed "
+            "before verifiers ran (check stderr for MissingExtraError / auth errors)",
+            file=sys.stderr,
+        )
+    val = runner.val_score(results)
+    print(json.dumps({"results": results, "val_score": val}))
+except Exception as e:
+    traceback.print_exc()
+    print(json.dumps({"results": {tid: None for tid in task_ids}, "val_score": 0.0, "error": str(e)}))
+    sys.exit(1)
 '''
