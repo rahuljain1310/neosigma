@@ -1,0 +1,133 @@
+# Agent Optimization Service
+
+Backend service that runs an agent against a TerminalBench subset in isolated sandboxes, mines failures from execution traces, and iteratively improves `agent/agent.py` via an LLM optimization loop.
+
+## Architecture
+
+```
+POST /jobs → worker claims job → for each iteration:
+  load best agent_version → harbor run (sandbox per task) → persist traces/results
+  → LLM proposes new agent.py → save agent_version → accept if score improved
+```
+
+**Key design decision:** auto-harness has no structured improvement API. Improvements are direct edits to the full `agent/agent.py` file. Our service owns a working copy of the harness and plays the "coding agent" role programmatically. Postgres stores every `agent_version`, iteration, trace, and LLM artifact for full observability.
+
+**Sandbox boundary:** The API/worker never executes agent code. `TerminalBenchRunner` shells out to `harbor run`, which provisions one sandbox per task (docker locally, E2B in production). The agent LLM loop runs in the Harbor process; only bash commands enter the sandbox.
+
+## Quick start
+
+### 1. Start Postgres
+
+```bash
+docker compose up -d db
+```
+
+### 2. Install dependencies
+
+```bash
+uv sync
+cp .env.example .env
+# edit .env if needed
+```
+
+### 3. Run the API
+
+```bash
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+On first startup the service seeds a default org and prints an admin API key to the logs. Store it:
+
+```bash
+export AOS_API_KEY=aos_...
+```
+
+### 4. Run the test client (simulated executor — no sandbox cost)
+
+```bash
+uv run python test_client.py --executor simulated --max-iterations 3 --patience 2
+```
+
+### 5. OpenAPI spec
+
+- Swagger UI: http://localhost:8000/docs
+- Raw spec: http://localhost:8000/openapi.json
+- Export to file: `uv run python scripts/export_openapi.py`
+
+## API overview
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /jobs` | Submit optimization job (returns 202) |
+| `GET /jobs/{id}` | Poll job status, latest results, iteration summaries |
+| `GET /jobs/{id}/iterations` | Full iteration history |
+| `GET /jobs/{id}/iterations/{n}` | Iteration detail with traces + LLM artifacts |
+| `POST /jobs/{id}/cancel` | Cancel a queued/running job |
+| `POST /orgs` | Create org (admin only) |
+| `POST /orgs/{id}/members` | Issue API key (admin only) |
+
+Auth: `Authorization: Bearer <api_key>`. Members see only their own jobs; admins see all org jobs.
+
+## Executors
+
+| Executor | Use case |
+|----------|----------|
+| `simulated` | Deterministic fake benchmark for M1/M2/M4 dev (default) |
+| `harbor` | Real Terminal-Bench via auto-harness + Harbor sandboxes (M3) |
+
+Harbor mode requires `harbor` CLI (`uv tool install harbor`), Docker or E2B credentials, and clones [neosigmaai/auto-harness](https://github.com/neosigmaai/auto-harness) into `data/harness/<job_id>/`.
+
+## TerminalBench task subset
+
+Default 10-task subset (fast, representative mix):
+
+- `regex-log`, `cobol-modernization`, `git-multibranch`, `sqlite-with-gcov`, `path-tracing`
+- `qemu-alpine`, `configure-git-webserver`, `extract-moves-from-video`, `fix-git`, `hf-model-inference`
+
+Override via `POST /jobs` `task_ids` field.
+
+## Optimization loop
+
+1. **Baseline (iteration 0):** run template `agent.py`, record score + traces.
+2. **Iterations 1..N:** optimizer reads failing traces + accumulated learnings → proposes full new `agent.py` → run benchmark → accept if `val_score` improved, else reject.
+3. **Stop when:** patience exhausted (N rounds without improvement), `max_iterations` reached, all tasks pass, or cancelled.
+
+All phases persist to Postgres as they complete (`bench_started_at`, `llm_finished_at`, etc.) for live observability of async runs.
+
+## Differences from auto-harness
+
+| auto-harness | This service |
+|--------------|--------------|
+| Human drives Claude Code via PROGRAM.md | Fully autonomous HTTP service |
+| git commits as version store | `agent_versions` table in Postgres |
+| `results.tsv` one line per success | Full history including rejections + traces |
+| Held-out test split gating | Same-subset improvement (noted limitation) |
+| `learnings.md` on disk | `jobs.learnings` in DB, fed to every optimizer prompt |
+
+## Project structure
+
+```
+app/
+  api/           FastAPI routers
+  models/        SQLAlchemy models (one file per model)
+  schemas/       Pydantic request/response models
+  executor/      SimulatedExecutor + HarborExecutor
+  harness/       Agent template + workspace adapter
+  worker/        Background job processor
+  optimizer.py   LLM/heuristic improvement proposer
+test_client.py   End-to-end client
+scripts/         OpenAPI export
+```
+
+## Future work
+
+- Held-out test split gating to prevent overfitting on the API-provided subset
+- Regression suite promotion (auto-harness's `gating.py` Step 3)
+- Alembic migrations for production schema evolution
+- Job queue via Redis/Celery for horizontal worker scaling
+
+## Not implemented / trade-offs
+
+- **Alembic:** using `create_all` for scope; fine for take-home, not production-grade migrations
+- **Test split gating:** assignment provides one subset via API; we gate on same-subset improvement
+- **Harbor in CI:** requires Docker + harbor CLI; simulated executor covers automated testing

@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""End-to-end client for the Agent Optimization Service."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+from typing import Any
+
+import httpx
+
+DEFAULT_BASE = os.environ.get("AOS_BASE_URL", "http://localhost:8000")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Agent Optimization Service test client")
+    parser.add_argument("--base-url", default=DEFAULT_BASE)
+    parser.add_argument("--api-key", default=os.environ.get("AOS_API_KEY", ""))
+    parser.add_argument("--executor", choices=["simulated", "harbor"], default="simulated")
+    parser.add_argument("--max-iterations", type=int, default=3)
+    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--task-ids", nargs="*", default=None)
+    args = parser.parse_args()
+
+    if not args.api_key:
+        print("Set AOS_API_KEY or pass --api-key", file=sys.stderr)
+        return 1
+
+    headers = {"Authorization": f"Bearer {args.api_key}"}
+    with httpx.Client(base_url=args.base_url, headers=headers, timeout=60.0) as client:
+        health = client.get("/health")
+        health.raise_for_status()
+        print("Health:", health.json())
+
+        payload: dict[str, Any] = {
+            "max_iterations": args.max_iterations,
+            "patience": args.patience,
+            "executor": args.executor,
+            "config": {},
+        }
+        if args.task_ids:
+            payload["task_ids"] = args.task_ids
+
+        created = client.post("/jobs", json=payload)
+        created.raise_for_status()
+        job = created.json()
+        job_id = job["id"]
+        print(f"Submitted job {job_id} (status={job['status']})")
+
+        while True:
+            resp = client.get(f"/jobs/{job_id}")
+            resp.raise_for_status()
+            job = resp.json()
+            status = job["status"]
+            score = job.get("best_val_score")
+            print(f"  status={status} best_val_score={score}")
+            if status in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(args.poll_interval)
+
+        print("\n=== Job summary ===")
+        print(json.dumps(
+            {
+                "id": job["id"],
+                "status": job["status"],
+                "stop_reason": job.get("stop_reason"),
+                "best_val_score": job.get("best_val_score"),
+                "best_agent_version_no": job.get("best_agent_version_no"),
+                "task_ids": job.get("task_ids"),
+            },
+            indent=2,
+        ))
+
+        print("\n=== Latest task results ===")
+        for tr in job.get("latest_task_results", []):
+            print(f"  {tr['task_id']}: {tr['status']} reward={tr.get('reward')}")
+
+        iterations_resp = client.get(f"/jobs/{job_id}/iterations")
+        iterations_resp.raise_for_status()
+        iterations = iterations_resp.json()
+        print(f"\n=== Iteration history ({len(iterations)} iterations) ===")
+        for it in iterations:
+            accepted = it.get("accepted")
+            mark = "✓" if accepted else ("✗" if accepted is False else "-")
+            print(
+                f"  [{mark}] iter={it['iteration_no']} "
+                f"phase={it['phase']} val_score={it.get('val_score')} "
+                f"agent_v={it['agent_version_no']}"
+            )
+            if it.get("improvement_rationale"):
+                print(f"       rationale: {it['improvement_rationale'][:120]}")
+
+        if iterations:
+            detail = client.get(f"/jobs/{job_id}/iterations/0")
+            detail.raise_for_status()
+            d = detail.json()
+            print(f"\n=== Iteration 0 detail: {len(d.get('task_results', []))} task results ===")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

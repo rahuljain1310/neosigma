@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentopt
+      POSTGRES_PASSWORD: agentopt
+      POSTGRES_DB: agentopt
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentopt"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentopt:agentopt@db:5432/agentopt
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      E2B_API_KEY: ${E2B_API_KEY:-}
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
