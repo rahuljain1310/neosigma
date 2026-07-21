@@ -10,11 +10,7 @@ POST /jobs → worker claims job → for each iteration:
   → LLM proposes new agent.py → save agent_version → accept if score improved
 ```
 
-**Key design decision:** auto-harness has no structured improvement API. Improvements are direct edits to the full `agent/agent.py` file. Our service owns a working copy of the harness and plays the "coding agent" role programmatically. Postgres stores every `agent_version`, iteration, trace, and LLM artifact for full observability.
-
-**Sandbox boundary:** The API/worker never executes agent code. `TerminalBenchRunner` shells out to `harbor run`, which provisions one Daytona sandbox per task. The agent LLM loop runs in the Harbor process; only bash commands enter the sandbox.
-
-## Asynchronous processing
+## Asynchronous processing (M2)
 
 Submitting a run does not block on benchmark execution. `POST /jobs` creates a
 `queued` job in Postgres and immediately returns `202 Accepted` with the job ID.
@@ -82,32 +78,94 @@ error results, then advances the iteration phase. Job-level fields such as the
 best score, best agent version, stop reason, and final status are updated as the
 optimization loop progresses.
 
-### Status APIs
+Postgres is the communication boundary between the API and worker. The API
+writes submissions and reads status; the worker reads pending work and persists
+progress and results. This keeps benchmark work out of the request path and
+gives both layers one durable source of truth.
 
-- `POST /jobs` — submit a job and receive `202 Accepted` with its ID.
-- `GET /jobs/{id}` — primary polling endpoint; returns lifecycle status, current
-  iteration summaries, live task progress, latest task results, and best score.
-- `GET /jobs?status=...` — list visible jobs, optionally filtered by lifecycle
-  status.
-- `GET /jobs/{id}/iterations` — read the complete iteration history.
-- `GET /jobs/{id}/iterations/{n}` — inspect one iteration and its task results,
-  traces, and optimizer artifacts.
-- `GET /jobs/{id}/agent-versions` — inspect the agent revisions produced by the
-  run.
-- `POST /jobs/{id}/cancel` — request cancellation of queued or running work.
+## Sandbox execution
 
-All reads use the same persisted state written by the worker and enforce the
-caller's organization and job visibility rules.
+Real benchmark jobs use the Harbor executor with Daytona as the environment
+provider. The service orchestrates the run, but untrusted agent commands never
+execute in the API or worker process:
 
-Postgres is therefore the communication boundary between the API and worker.
-The API writes submissions and reads status; the worker reads pending work and
-persists progress and results. This keeps benchmark work out of the request path
-and gives both layers one durable source of truth.
+```
+JobProcessor
+  → HarborExecutor
+    → TerminalBenchRunner / Harbor
+      → one isolated Daytona sandbox per task
+```
 
-For this project, the worker runs alongside the API and the database acts as the
-queue. A production deployment requiring multiple workers or horizontal scaling
-would move job delivery to a dedicated queue such as Redis/Celery while keeping
-the same submit-and-poll API.
+### Environment lifecycle
+
+Each job receives its own auto-harness workspace. Before an iteration, the
+executor writes the selected agent version and benchmark configuration into that
+workspace, clears artifacts from the previous run, and starts Harbor. Harbor
+creates a separate Daytona sandbox for each task, runs the agent and verifier,
+then tears the environment down.
+
+The agent's LLM loop is controlled by Harbor; only the agent's terminal commands
+cross into the sandbox. The API and worker retain no mechanism for directly
+executing the generated agent code.
+
+### Results and failure handling
+
+Harbor writes a trace and verifier result for each task. The executor converts
+those artifacts into structured task results and persists the combined process
+log for diagnosis. Missing verifier output, sandbox provisioning failures, and
+timeouts are recorded as `infra_error`, keeping infrastructure failures distinct
+from genuine agent failures.
+
+The executor checks prerequisites before starting, enforces run timeouts, and
+terminates the full Harbor process group when a job is cancelled or exceeds its
+deadline. This prevents abandoned benchmark processes while preserving whatever
+diagnostic output was available.
+
+The `simulated` executor follows the same interface without creating sandboxes,
+allowing the API, worker, and optimization lifecycle to be tested without
+external infrastructure or sandbox cost.
+
+## Iterative optimizer loop (M4)
+
+The processor treats every benchmark run as an immutable iteration and every
+agent proposal as a versioned snapshot:
+
+```
+baseline agent
+  → benchmark
+  → analyze results and traces
+  → propose a complete agent.py
+  → benchmark the candidate
+  → accept if its score improves
+  → repeat from the best version
+```
+
+### Baseline and proposal
+
+Iteration 0 benchmarks the original agent template and establishes the initial
+best score. For each subsequent proposal, the optimizer receives the current
+best agent, task outcomes and traces, accumulated learnings, and the effect of
+the previous attempt. It returns a complete replacement for `agent.py` together
+with its rationale and new learnings.
+
+The proposal is stored as a new `AgentVersion` linked to its parent, including
+its content hash and diff. The next iteration benchmarks that exact snapshot.
+This means rejected proposals remain inspectable and runs can be reconstructed
+without relying on mutable files.
+
+### Evaluation and stopping
+
+A candidate becomes the new best version only when its validation score strictly
+improves. Otherwise it is rejected, the previous best remains active, and the
+failed attempt is fed back into the next proposal. The loop stops when all tasks
+pass, the iteration limit is reached, repeated attempts do not improve the
+score, the optimizer produces no change, or the job is cancelled.
+
+Each phase is committed as it completes. Iteration records retain benchmark
+scores, acceptance decisions, task results, traces, optimizer inputs and
+outputs, rationale, learnings, and timing information. Clients can inspect the
+entire history through the iteration and agent-version APIs while the job is
+running or after it finishes.
 
 ## Quick start
 
@@ -178,6 +236,8 @@ The test client logs in with the default credentials above — no env vars requi
 | `GET /jobs/{id}` | Poll job status, latest results, iteration summaries |
 | `GET /jobs/{id}/iterations` | Full iteration history |
 | `GET /jobs/{id}/iterations/{n}` | Iteration detail with traces + LLM artifacts |
+| `GET /jobs/{id}/agent-versions` | Full agent-version history |
+| `GET /jobs/{id}/agent-versions/{n}` | Agent snapshot and diff |
 | `POST /jobs/{id}/cancel` | Cancel a queued/running job |
 
 Auth: log in with `POST /auth/login`, then send `Authorization: Bearer <access_token>`. Members see only their own jobs; admins see all org jobs.
@@ -193,55 +253,67 @@ Harbor mode clones [neosigmaai/auto-harness](https://github.com/neosigmaai/auto-
 
 ## TerminalBench task subset
 
-Default 10-task subset (fast, representative mix):
+Testing used sets of 3–12 tasks drawn from:
 
-- `regex-log`, `cobol-modernization`, `git-multibranch`, `sqlite-with-gcov`, `path-tracing`
-- `qemu-alpine`, `configure-git-webserver`, `extract-moves-from-video`, `fix-git`, `hf-model-inference`
+`regex-log`, `extract-elf`, `log-summary-date-ranges`, `openssl-selfsigned-cert`,
+`sqlite-db-truncate`, `fix-code-vulnerability`, `password-recovery`,
+`cancel-async-tasks`, `query-optimize`, `gcode-to-text`, `filter-js-from-html`,
+`break-filter-js-from-html`, `fix-git`, `git-leak-recovery`, `git-multibranch`,
+`sqlite-with-gcov`, `cobol-modernization`, `path-tracing`, `qemu-alpine`,
+`configure-git-webserver`, `extract-moves-from-video`, `hf-model-inference`
 
-Override via `POST /jobs` `task_ids` field.
+The default is a smaller set (`regex-log`, `extract-elf`,
+`log-summary-date-ranges`). Selection favored shorter execution times and enough
+variance in success rates to exercise the optimization loop. Override via
+`POST /jobs` `task_ids`.
 
-## Optimization loop
 
-1. **Baseline (iteration 0):** run template `agent.py`, record score + traces.
-2. **Iterations 1..N:** optimizer reads failing traces + accumulated learnings → proposes full new `agent.py` → run benchmark → accept if `val_score` improved, else reject.
-3. **Stop when:** patience exhausted (N rounds without improvement), `max_iterations` reached, all tasks pass, or cancelled.
-
-All phases persist to Postgres as they complete (`bench_started_at`, `optimizer_finished_at`, etc.) for live observability of async runs.
-
-## Differences from auto-harness
-
-| auto-harness | This service |
-|--------------|--------------|
-| Human drives Claude Code via PROGRAM.md | Fully autonomous HTTP service |
-| git commits as version store | `agent_versions` table in Postgres |
-| `results.tsv` one line per success | Full history including rejections + traces |
-| Held-out test split gating | Same-subset improvement (noted limitation) |
-| `learnings.md` on disk | `jobs.learnings` in DB, fed to every optimizer prompt |
-
-## Project structure
+### Sample Run 
 
 ```
-app/
-  api/           FastAPI routers
-  models/        SQLAlchemy models (one file per model)
-  schemas/       Pydantic request/response models
-  executor/      SimulatedExecutor + HarborExecutor
-  harness/       Agent template + workspace adapter
-  worker/        Background job processor
-  optimizer.py   LLM/heuristic improvement proposer
-test_client.py   End-to-end client
-scripts/         OpenAPI export
+uv run python test_client.py --executor harbor --max-iterations 15 --patience 5
+Health: {'status': 'ok', 'version': '0.1.0'}
+Logged in as admin@example.com @ default
+Submitted job bdfb8b9e52fe4e9ea040ed147d0ad0a9 (status=queued)
+  job status=queued best_val_score=None
+  job status=running best_val_score=None
+  [iter 0] running benchmark with agent_v=0 | tasks: 3 pending, 0 running, 0 completed (0/3)
+  [iter 0] benchmark done: agent_v=0 val_score=0.667 | 2/3 passed, 1 failed, 0 infra_error (log-summary-date-ranges)
+  [iter 0] proposed agent_v=1 for next run: The failed run involved a date-range task where the agent appeared to infer a reference date from the data instead of reliably using the container's current ...
+  [iter 1] running benchmark with agent_v=1 | tasks: 3 pending, 0 running, 0 completed (0/3)
+  [iter 1] benchmark done: agent_v=1 val_score=0.667 | 2/3 passed, 1 failed, 0 infra_error (regex-log)
+  [iter 1] rejected — val_score=0.667 (best remains 0.667)
+  [iter 1] proposed agent_v=2 for next run: The failed date-range task used a guessed reference date instead of the container's actual current date. The prior broad attempt fixed that task but added in...
+  [iter 2] running benchmark with agent_v=2 | tasks: 3 pending, 0 running, 0 completed (0/3)
+  job status=completed best_val_score=1.000
+  [iter 2] benchmark done: agent_v=2 val_score=1.000 | 3/3 passed, 0 failed, 0 infra_error
+  [iter 2] accepted — new best_val_score=1.000 (agent_v=2)
+
+=== Job summary ===
+{
+  "id": "bdfb8b9e52fe4e9ea040ed147d0ad0a9",
+  "status": "completed",
+  "stop_reason": "all_tasks_passed",
+  "best_val_score": 1.0,
+  "best_agent_version_no": 2,
+  "task_ids": [
+    "regex-log",
+    "extract-elf",
+    "log-summary-date-ranges"
+  ]
+}
+
+=== Latest task results ===
+  regex-log: passed reward=1.0
+  extract-elf: passed reward=1.0
+  log-summary-date-ranges: passed reward=1.0
+
+=== Iteration history (3 iterations) ===
+  [✓] iter=0 phase=done val_score=0.6666666666666666 agent_v=0 | 2/3 passed, 1 failed, 0 infra_error
+       failed: log-summary-date-ranges
+       changes: The failed run involved a date-range task where the agent appeared to infer a reference date from the data instead of reliably using the container's current dat
+  [✗] iter=1 phase=done val_score=0.6666666666666666 agent_v=1 | 2/3 passed, 1 failed, 0 infra_error
+       failed: regex-log
+       changes: The failed date-range task used a guessed reference date instead of the container's actual current date. The prior broad attempt fixed that task but added initi
+  [✓] iter=2 phase=done val_score=1.0 agent_v=2 | 3/3 passed, 0 failed, 0 infra_error
 ```
-
-## Future work
-
-- Held-out test split gating to prevent overfitting on the API-provided subset
-- Regression suite promotion (auto-harness's `gating.py` Step 3)
-- Alembic migrations for production schema evolution
-- Job queue via Redis/Celery for horizontal worker scaling
-
-## Not implemented / trade-offs
-
-- **Alembic:** using `create_all` for scope; fine for take-home, not production-grade migrations
-- **Test split gating:** assignment provides one subset via API; we gate on same-subset improvement
-- **Harbor in CI:** requires Docker + harbor CLI; simulated executor covers automated testing
