@@ -185,12 +185,12 @@ class HarnessAgent(BaseAgent):
 DEFAULT_TASK_IDS = [
     "regex-log",
     "filter-js-from-html",
-    "break-filter-js-from-html",
     "extract-elf",
     "log-summary-date-ranges",
     "gcode-to-text",
 
     ## Slower (tmp - hide)
+    # "break-filter-js-from-html",
     # "fix-git",
     # "git-leak-recovery",
     # "git-multibranch",

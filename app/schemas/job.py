@@ -22,11 +22,11 @@ class JobCreate(BaseModel):
     )
     executor: Literal["simulated", "harbor"] = Field(
         default="simulated",
-        description="simulated = deterministic fake benchmark (M1/M2/M4 dev); harbor = real Harbor/E2B runs (M3).",
+        description="simulated = deterministic fake benchmark (M1/M2/M4 dev); harbor = real Terminal-Bench via Harbor+Daytona (M3).",
     )
     config: dict[str, Any] = Field(
         default_factory=dict,
-        description="Executor-specific overrides (env_provider, agent_model, etc.).",
+        description="Executor-specific overrides (agent_model, n_concurrent, etc.).",
     )
 
 

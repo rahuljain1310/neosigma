@@ -12,7 +12,7 @@ POST /jobs → worker claims job → for each iteration:
 
 **Key design decision:** auto-harness has no structured improvement API. Improvements are direct edits to the full `agent/agent.py` file. Our service owns a working copy of the harness and plays the "coding agent" role programmatically. Postgres stores every `agent_version`, iteration, trace, and LLM artifact for full observability.
 
-**Sandbox boundary:** The API/worker never executes agent code. `TerminalBenchRunner` shells out to `harbor run`, which provisions one sandbox per task (docker locally, E2B in production). The agent LLM loop runs in the Harbor process; only bash commands enter the sandbox.
+**Sandbox boundary:** The API/worker never executes agent code. `TerminalBenchRunner` shells out to `harbor run`, which provisions one Daytona sandbox per task. The agent LLM loop runs in the Harbor process; only bash commands enter the sandbox.
 
 ## Quick start
 
@@ -85,15 +85,7 @@ Auth: log in with `POST /auth/login`, then send `Authorization: Bearer <access_t
 | `simulated` | Deterministic fake benchmark for M1/M2/M4 dev |
 | `harbor` | Real Terminal-Bench via auto-harness + Harbor sandboxes (M3) |
 
-Harbor mode clones [neosigmaai/auto-harness](https://github.com/neosigmaai/auto-harness) and runs `harbor run` with `--env` from `HARBOR_ENV_PROVIDER`:
-
-| Provider | Notes |
-|----------|-------|
-| `daytona` | Cloud sandboxes ([TB 2.0 docs](https://www.tbench.ai/docs/run-terminal-bench-2-0)); needs `DAYTONA_API_KEY`. Best on Apple Silicon. |
-| `e2b` | Cloud sandboxes; needs `E2B_API_KEY` |
-| `docker` | Local Docker socket; Terminal-Bench images are `linux/amd64` and often fail on arm64 hosts |
-
-Also needs an LLM key (`OPENAI_API_KEY`) for the agent under test.
+Harbor mode clones [neosigmaai/auto-harness](https://github.com/neosigmaai/auto-harness) and runs `harbor run --env daytona` ([TB 2.0 docs](https://www.tbench.ai/docs/run-terminal-bench-2-0)). Requires `DAYTONA_API_KEY` and `OPENAI_API_KEY` (for the agent under test).
 
 ## TerminalBench task subset
 

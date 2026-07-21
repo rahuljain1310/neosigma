@@ -7,7 +7,6 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 from app.config import get_settings
 from app.executor.base import BenchmarkResult, Executor, TaskExecution
@@ -15,11 +14,13 @@ from app.harness.workspace import HarnessWorkspace, make_workspace
 
 logger = logging.getLogger(__name__)
 
+_ENV_PROVIDER = "daytona"
+
 
 class HarborExecutor(Executor):
     """Run Terminal-Bench via auto-harness's TerminalBenchRunner (harbor run).
 
-    Each task executes in an isolated sandbox (docker/e2b/daytona) managed by Harbor.
+    Each task executes in an isolated Daytona sandbox managed by Harbor.
     The agent LLM loop runs in the Harbor process; only bash commands enter the sandbox.
     """
 
@@ -47,19 +48,15 @@ class HarborExecutor(Executor):
         env["HARNESS_SAVE_TRACE"] = "1"
         if settings.openai_api_key and not env.get("OPENAI_API_KEY"):
             env["OPENAI_API_KEY"] = settings.openai_api_key
-        if settings.e2b_api_key and not env.get("E2B_API_KEY"):
-            env["E2B_API_KEY"] = settings.e2b_api_key
         if settings.daytona_api_key and not env.get("DAYTONA_API_KEY"):
             env["DAYTONA_API_KEY"] = settings.daytona_api_key
 
-        env_provider = self.config.get("env_provider", settings.harbor_env_provider)
         cmd = [
             sys.executable,
             "-c",
             _RUNNER_SNIPPET,
             str(self.workspace.root),
             json.dumps(task_ids),
-            env_provider,
             str(self.config.get("n_concurrent", settings.harbor_n_concurrent)),
             self.config.get("agent_model", settings.agent_model),
             str(self.config.get("per_task_timeout", settings.per_task_timeout_sec)),
@@ -133,54 +130,17 @@ class HarborExecutor(Executor):
         if shutil.which("harbor") is None:
             return (
                 "harbor CLI not found on PATH. Rebuild the API image after installing "
-                "the harbor package (pip install harbor)."
+                "the harbor package (pip install 'harbor[daytona]')."
             )
-        env_provider = self.config.get("env_provider", settings.harbor_env_provider)
-        if env_provider == "docker":
-            if shutil.which("docker") is None:
-                return "docker CLI not found; required when HARBOR_ENV_PROVIDER=docker"
-            probe = subprocess.run(
-                ["docker", "info"],
-                capture_output=True,
-                text=True,
-                timeout=30,
+        if not (settings.daytona_api_key or os.environ.get("DAYTONA_API_KEY")):
+            return "DAYTONA_API_KEY is required for Harbor+Daytona runs"
+        try:
+            import daytona  # noqa: F401
+        except ImportError:
+            return (
+                "Harbor daytona extra missing. Rebuild API image with "
+                "pip install 'harbor[daytona]'."
             )
-            if probe.returncode != 0:
-                detail = (probe.stderr or probe.stdout or "").strip()[:500]
-                return (
-                    "Cannot reach Docker daemon from the API container "
-                    f"(mount /var/run/docker.sock). {detail}"
-                )
-            arch = subprocess.run(
-                ["docker", "info", "--format", "{{.Architecture}}"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            host_arch = (arch.stdout or "").strip().lower()
-            if host_arch in {"aarch64", "arm64"}:
-                logger.warning(
-                    "[harbor] Docker host architecture is %s; Terminal-Bench images are "
-                    "linux/amd64 and often fail on ARM. Prefer HARBOR_ENV_PROVIDER=daytona "
-                    "or e2b, or run Colima/Docker with amd64/qemu.",
-                    host_arch,
-                )
-        elif env_provider == "e2b":
-            if not (settings.e2b_api_key or os.environ.get("E2B_API_KEY")):
-                return "E2B_API_KEY is required when HARBOR_ENV_PROVIDER=e2b"
-            if not _harbor_extra_available("e2b"):
-                return (
-                    "Harbor e2b extra missing. Rebuild API image with "
-                    "pip install 'harbor[e2b]' (or harbor[cloud])."
-                )
-        elif env_provider == "daytona":
-            if not (settings.daytona_api_key or os.environ.get("DAYTONA_API_KEY")):
-                return "DAYTONA_API_KEY is required when HARBOR_ENV_PROVIDER=daytona"
-            if not _harbor_extra_available("daytona"):
-                return (
-                    "Harbor daytona extra missing. Rebuild API image with "
-                    "pip install 'harbor[daytona]' (or harbor[cloud])."
-                )
         return None
 
     def _infra_failure(
@@ -216,7 +176,7 @@ class HarborExecutor(Executor):
             "agent_model": self.config.get("agent_model", settings.agent_model),
             "split": "train",
             "gate_split": "test",
-            "env_provider": self.config.get("env_provider", settings.harbor_env_provider),
+            "env_provider": _ENV_PROVIDER,
             "max_concurrency": self.config.get("n_concurrent", settings.harbor_n_concurrent),
             "per_task_timeout": self.config.get("per_task_timeout", settings.per_task_timeout_sec),
         }
@@ -233,25 +193,6 @@ class HarborExecutor(Executor):
         if result_path.exists():
             verifier = json.loads(result_path.read_text())
         return trace, verifier
-
-
-def _harbor_extra_available(provider: str) -> bool:
-    """Detect whether harbor's optional provider package is importable."""
-    if provider == "daytona":
-        try:
-            import daytona  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
-    if provider == "e2b":
-        try:
-            import e2b  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
-    return True
 
 
 def _exception_from_artifacts(
@@ -291,16 +232,13 @@ def _infer_infra_summary(log: str) -> str | None:
     markers = (
         "MissingExtraError",
         "pip install 'harbor[daytona]'",
-        "pip install 'harbor[e2b]'",
         "DAYTONA_API_KEY",
-        "E2B_API_KEY",
         "AuthenticationError",
         "insufficient_quota",
         "RateLimitError",
     )
     for marker in markers:
         if marker in log:
-            # Prefer a short window around the marker.
             idx = log.find(marker)
             start = max(0, idx - 80)
             end = min(len(log), idx + 220)
@@ -343,20 +281,19 @@ _RUNNER_SNIPPET = r'''
 import json, os, sys, traceback
 from benchmark import TerminalBenchRunner
 
-root, task_ids_json, env_provider, n_concurrent, agent_model, per_task_timeout = sys.argv[1:7]
+root, task_ids_json, n_concurrent, agent_model, per_task_timeout = sys.argv[1:6]
 os.chdir(root)
 task_ids = json.loads(task_ids_json)
 try:
     runner = TerminalBenchRunner(
         agent_model=agent_model,
         split="train",
-        env_provider=env_provider,
+        env_provider="daytona",
         n_concurrent=int(n_concurrent),
         per_task_timeout=int(per_task_timeout),
         jobs_dir="workspace/tbench_jobs",
     )
     results = runner.run(task_ids=task_ids)
-    # TerminalBenchRunner can return all-null rewards when harbor crashes early.
     if results and all(v is None for v in results.values()):
         print(
             "[benchmark] WARNING: all task rewards are null — harbor likely failed "
